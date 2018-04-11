@@ -3,6 +3,15 @@ dist: trusty
 compiler: g++
 sudo: required
 
+env:
+  global:
+   # The next declaration is the encrypted COVERITY_SCAN_TOKEN, created
+   #   via the "travis encrypt" command using the project repo's public key
+   - secure: "LqeOZPE7x2rTSo2gyfOXuVeiqpIX+hoHeRQIUhDd0v63tLiImpg58xnM+pZW3Aerfm9cpVrpKYuWW/UbTDDXLjdqxV1lIAu2pvuNSPeRypVifTzDLif8MwGCdwFKbC/ft/gqd6S4h2ZFsTRSgnWYov/ZjomurqUklqmchUbTd64BXDxpUmk5cFDc9/xz18WnGw5LE3SNOyTqjoVEHPjGT5T90Vz9z8oQTz7Q/C87bQEkmzDD1rq0YDe+3ggCHAksWwJ9e+wga4wmTdj8DP78yK21MEZk7nfipQxN8vePJdxGNdaQqYZlmNyHfHlfW1oCDUYLmbYF5GCmwiE5facEhRVYuLHxkSYvPK01bK2R+OUlAJHUMEGefyMkruGBQr4FoNkRtUSSrX1eSz39mXkYcRKBlKAkudHDu8hlRhkY9bV+1evZzrwcTmzYahxW1U5A7aXdJBIERNT3dnZQ092ey9bK0IveLI3vKU0QA1eQbBDSqMuwHuJXDmn86/Qy7s+Zvnhey+c5Ai5cVP4S9/jaF9dIoLgLDsEaUBFgHXdDcMepoP+sbq2TCaRtLOqPiGijqmlWk8lEGmevtF7TyV5p9NQkOcbrxDS8u+xvZ9qbSSfIR7ES9/USwkOv+J07XL1QBjd2R/loNecQGg5wb/1iXeDZ4cvhtFjGd/V8F6/BjpM="
+
+before_install:
+  - echo -n | openssl s_client -connect https://scan.coverity.com:443 | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' | sudo tee -a /etc/ssl/certs/ca-
+
 before_install:
   - sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
   - sudo apt-get update -q
@@ -13,6 +22,16 @@ before_install:
   - sudo update-alternatives --install /usr/bin/gcc-ranlib gcc-ranlib /usr/bin/gcc-ranlib-7 60
   - sudo update-alternatives --install /usr/bin/x86_64-linux-gnu-gcc x86_64-linux-gnu-gcc /usr/bin/x86_64-linux-gnu-gcc-7 60 --slave /usr/bin/x86_64-linux-gnu-g++ x86_64-linux-gnu-g++ /usr/bin/x86_64-linux-gnu-g++-7
 
+addons:
+  coverity_scan:
+    project:
+      name: "conp-solutions/minisat"
+      description: "Build submitted via Travis CI"
+    notification_email: nmanthey@conp-solutions.com
+    build_command_prepend: "true"
+    build_command: "make cr r lsh"
+    branch_pattern: master
+
 # run the typical ci checks, for now, compile
 script:
-  - make cd cp cr csh d r p sh lr ld lp lsh -j $(nproc)
+  - make clean && make cd cp cr csh d r p sh lr ld lp lsh -j $(nproc)
