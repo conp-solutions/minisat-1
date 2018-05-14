@@ -29,25 +29,25 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 
 using namespace Minisat;
 
-static inline int memReadStat(int field)
+static inline size_t memReadStat(int field)
 {
     char  name[256];
     pid_t pid = getpid();
-    int   value;
+    size_t   value;
 
     sprintf(name, "/proc/%d/statm", pid);
     FILE* in = fopen(name, "rb");
     if (in == NULL) return 0;
 
     for (; field >= 0; field--)
-        if (fscanf(in, "%d", &value) != 1)
+        if (fscanf(in, "%ld", &value) != 1)
             printf("c ERROR! Failed to parse memory statistics from \"/proc\".\n"), exit(1);
     fclose(in);
     return value;
 }
 
 
-static inline int memReadPeak(void)
+static inline size_t memReadPeak(void)
 {
     char  name[256];
     pid_t pid = getpid();
@@ -57,8 +57,8 @@ static inline int memReadPeak(void)
     if (in == NULL) return 0;
 
     // Find the correct line, beginning with "VmPeak:":
-    int peak_kb = 0;
-    while (!feof(in) && fscanf(in, "VmPeak: %d kB", &peak_kb) != 1)
+    size_t peak_kb = 0;
+    while (!feof(in) && fscanf(in, "VmPeak: %ld kB", &peak_kb) != 1)
         while (!feof(in) && fgetc(in) != '\n')
             ;
     fclose(in);

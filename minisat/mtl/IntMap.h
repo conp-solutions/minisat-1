@@ -68,7 +68,7 @@ namespace Minisat {
             if (free)
                 in_set.clear(true); 
             else
-                for (int i = 0; i < xs.size(); i++)
+                for (size_t i = 0; i < xs.size(); i++)
                     in_set[xs[i]] = 0;
             xs.clear(free);
         }

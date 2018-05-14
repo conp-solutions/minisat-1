@@ -101,17 +101,17 @@ class SimpSolver : public Solver {
 
     // Statistics:
     //
-    int     merges;
-    int     asymm_lits;
-    int     eliminated_vars;
+    size_t     merges;
+    size_t     asymm_lits;
+    size_t     eliminated_vars;
 
  protected:
 
     // Helper structures:
     //
     struct ElimLt {
-        const LMap<int>& n_occ;
-        explicit ElimLt(const LMap<int>& no) : n_occ(no) {}
+        const LMap<size_t>& n_occ;
+        explicit ElimLt(const LMap<size_t>& no) : n_occ(no) {}
 
         // TODO: are 64-bit operations here noticably bad on 32-bit platforms? Could use a saturating
         // 32-bit implementation instead then, but this will have to do for now.
@@ -139,14 +139,14 @@ class SimpSolver : public Solver {
     VMap<char>          touched;
     OccLists<Var, vec<CRef>, ClauseDeleted>
                         occurs;
-    LMap<int>           n_occ;
+    LMap<size_t>        n_occ;
     Heap<Var,ElimLt>    elim_heap;
     Queue<CRef>         subsumption_queue;
     VMap<char>          frozen;
     vec<Var>            frozen_vars;
     VMap<char>          eliminated;
-    int                 bwdsub_assigns;
-    int                 n_touched;
+    size_t              bwdsub_assigns;
+    size_t              n_touched;
 
     // Temporaries:
     //
@@ -160,7 +160,7 @@ class SimpSolver : public Solver {
     void          updateElimHeap           (Var v);
     void          gatherTouchedClauses     ();
     bool          merge                    (const Clause& _ps, const Clause& _qs, Var v, vec<Lit>& out_clause);
-    bool          merge                    (const Clause& _ps, const Clause& _qs, Var v, int& size);
+    bool          merge                    (const Clause& _ps, const Clause& _qs, Var v, size_t& size);
     bool          backwardSubsumptionCheck (bool verbose = false);
     bool          eliminateVar             (Var v);
     void          extendModel              ();
@@ -199,7 +199,7 @@ inline void SimpSolver::freezeVar(Var v){
     } }
 
 inline void SimpSolver::thaw(){
-    for (int i = 0; i < frozen_vars.size(); i++){
+    for (size_t i = 0; i < frozen_vars.size(); i++){
         Var v = frozen_vars[i];
         frozen[v] = 0;
         if (use_simplification)

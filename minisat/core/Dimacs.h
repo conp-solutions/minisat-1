@@ -34,7 +34,8 @@ namespace Minisat {
 
 template<class B, class Solver>
 static void readClause(B& in, Solver& S, vec<Lit>& lits) {
-    int     parsed_lit, var;
+    int     parsed_lit;
+    size_t  var;
     lits.clear();
     for (;;){
         parsed_lit = parseInt(in);
@@ -49,8 +50,8 @@ template<class B, class Solver>
 static void parse_DIMACS_main(B& in, Solver& S, bool strictp = false) {
     vec<Lit> lits;
     int vars    = 0;
-    int clauses = 0;
-    int cnt     = 0;
+    size_t clauses = 0;
+    size_t cnt  = 0;
     for (;;){
         skipWhitespace(in);
         if (*in == EOF) break;

@@ -36,7 +36,7 @@ void Minisat::parseOptions(int& argc, char** argv, bool strict)
         } else {
             bool parsed_ok = false;
         
-            for (int k = 0; !parsed_ok && k < Option::getOptionList().size(); k++){
+            for (size_t k = 0; !parsed_ok && k < Option::getOptionList().size(); k++){
                 parsed_ok = Option::getOptionList()[k]->parse(argv[i]);
 
                 // fprintf(stderr, "checking %d: %s against flag <%s> (%s)\n", i, argv[i], Option::getOptionList()[k]->name, parsed_ok ? "ok" : "skip");
@@ -68,7 +68,7 @@ void Minisat::printUsageAndExit (int /*argc*/, char** argv, bool verbose)
     const char* prev_cat  = NULL;
     const char* prev_type = NULL;
 
-    for (int i = 0; i < Option::getOptionList().size(); i++){
+    for (size_t i = 0; i < Option::getOptionList().size(); i++){
         const char* cat  = Option::getOptionList()[i]->category;
         const char* type = Option::getOptionList()[i]->type_name;
 

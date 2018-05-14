@@ -24,7 +24,9 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include <stdlib.h>
 #include <stdio.h>
 
+#ifndef NO_ZLIB
 #include <zlib.h>
+#endif
 
 #include "minisat/mtl/XAlloc.h"
 
@@ -34,20 +36,29 @@ namespace Minisat {
 // A simple buffered character stream class:
 
 class StreamBuffer {
+#ifndef NO_ZLIB
     gzFile         in;
+#endif
     unsigned char* buf;
-    int            pos;
-    int            size;
+    size_t         pos;
+    size_t         size;
 
     enum { buffer_size = 64*1024 };
 
     void assureLookahead() {
         if (pos >= size) {
             pos  = 0;
-            size = gzread(in, buf, buffer_size); } }
+#ifndef NO_ZLIB
+            size = gzread(in, buf, buffer_size);
+#endif
+        } }
 
 public:
-    explicit StreamBuffer(gzFile i) : in(i), pos(0), size(0){
+    explicit StreamBuffer(gzFile i) :
+#ifndef NO_ZLIB
+        in(i),
+#endif
+        pos(0), size(0){
         buf = (unsigned char*)xrealloc(NULL, buffer_size);
         assureLookahead();
     }
@@ -55,7 +66,7 @@ public:
 
     int  operator *  () const { return (pos >= size) ? EOF : buf[pos]; }
     void operator ++ ()       { pos++; assureLookahead(); }
-    int  position    () const { return pos; }
+    size_t position  () const { return pos; }
 };
 
 //-------------------------------------------------------------------------------------------------

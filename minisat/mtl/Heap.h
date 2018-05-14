@@ -61,8 +61,8 @@ class Heap {
     void percolateDown(int i)
     {
         K x = heap[i];
-        while (left(i) < heap.size()){
-            int child = right(i) < heap.size() && lt(heap[right(i)], heap[left(i)]) ? right(i) : left(i);
+        while ((size_t)left(i) < heap.size()){
+            int child = (size_t)right(i) < heap.size() && lt(heap[right(i)], heap[left(i)]) ? right(i) : left(i);
             if (!lt(heap[child], x)) break;
             heap[i]          = heap[child];
             indices[heap[i]] = i;
@@ -76,10 +76,10 @@ class Heap {
   public:
     Heap(const Comp& c, MkIndex _index = MkIndex()) : indices(_index), lt(c) {}
 
-    int  size      ()          const { return heap.size(); }
+    size_t  size   ()          const { return heap.size(); }
     bool empty     ()          const { return heap.size() == 0; }
     bool inHeap    (K k)       const { return indices.has(k) && indices[k] >= 0; }
-    int  operator[](int index) const { assert(index < heap.size()); return heap[index]; }
+    int  operator[](int index) const { assert((size_t)index < heap.size()); return heap[index]; }
 
     void decrease  (K k) { assert(inHeap(k)); percolateUp  (indices[k]); }
     void increase  (K k) { assert(inHeap(k)); percolateDown(indices[k]); }
@@ -138,24 +138,24 @@ class Heap {
 
     // Rebuild the heap from scratch, using the elements in 'ns':
     void build(const vec<K>& ns) {
-        for (int i = 0; i < heap.size(); i++)
+        for (size_t i = 0; i < heap.size(); i++)
             indices[heap[i]] = -1;
         heap.clear();
 
-        for (int i = 0; i < ns.size(); i++){
+        for (size_t i = 0; i < ns.size(); i++){
             // TODO: this should probably call reserve instead of relying on it being reserved already.
             assert(indices.has(ns[i]));
             indices[ns[i]] = i;
             heap.push(ns[i]); }
 
-        for (int i = heap.size() / 2 - 1; i >= 0; i--)
-            percolateDown(i);
+        for (size_t i = heap.size() / 2; i > 0; i--)
+            percolateDown(i - 1);
     }
 
     void clear(bool dispose = false) 
     { 
         // TODO: shouldn't the 'indices' map also be dispose-cleared?
-        for (int i = 0; i < heap.size(); i++)
+        for (size_t i = 0; i < heap.size(); i++)
             indices[heap[i]] = -1;
         heap.clear(dispose); 
     }

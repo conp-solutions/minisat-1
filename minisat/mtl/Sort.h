@@ -36,12 +36,12 @@ struct LessThan_default {
 
 
 template <class T, class LessThan>
-void selectionSort(T* array, int size, LessThan lt)
+void selectionSort(T* array, size_t size, LessThan lt)
 {
-    int     i, j, best_i;
+    size_t  i, j, best_i;
     T       tmp;
 
-    for (i = 0; i < size-1; i++){
+    for (i = 0; size > 0 && i < size-1; i++){
         best_i = i;
         for (j = i+1; j < size; j++){
             if (lt(array[j], array[best_i]))
@@ -50,11 +50,11 @@ void selectionSort(T* array, int size, LessThan lt)
         tmp = array[i]; array[i] = array[best_i]; array[best_i] = tmp;
     }
 }
-template <class T> static inline void selectionSort(T* array, int size) {
+template <class T> static inline void selectionSort(T* array, size_t size) {
     selectionSort(array, size, LessThan_default<T>()); }
 
 template <class T, class LessThan>
-void sort(T* array, int size, LessThan lt)
+void sort(T* array, size_t size, LessThan lt)
 {
     if (size <= 15)
         selectionSort(array, size, lt);
@@ -62,8 +62,8 @@ void sort(T* array, int size, LessThan lt)
     else{
         T           pivot = array[size / 2];
         T           tmp;
-        int         i = -1;
-        int         j = size;
+        size_t      i = SIZE_MAX;
+        size_t      j = size;
 
         for(;;){
             do i++; while(lt(array[i], pivot));
@@ -78,7 +78,7 @@ void sort(T* array, int size, LessThan lt)
         sort(&array[i], size-i, lt);
     }
 }
-template <class T> static inline void sort(T* array, int size) {
+template <class T> static inline void sort(T* array, size_t size) {
     sort(array, size, LessThan_default<T>()); }
 
 

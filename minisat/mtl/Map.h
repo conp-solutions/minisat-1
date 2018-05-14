@@ -62,14 +62,14 @@ class Map {
     E          equals;
 
     vec<Pair>* table;
-    int        cap;
-    int        size;
+    size_t     cap;
+    size_t     size;
 
     // Don't allow copying (error prone):
     Map<K,D,H,E>&  operator = (Map<K,D,H,E>& other);
                    Map        (Map<K,D,H,E>& other);
 
-    bool    checkCap(int new_size) const { return new_size > cap; }
+    bool    checkCap(size_t new_size) const { return new_size > cap; }
 
     int32_t index  (const K& k) const { return hash(k) % cap; }
     void   _insert (const K& k, const D& d) { 
@@ -79,16 +79,16 @@ class Map {
     void    rehash () {
         const vec<Pair>* old = table;
 
-        int old_cap = cap;
-        int newsize = primes[0];
-        for (int i = 1; newsize <= cap && i < nprimes; i++)
+        size_t old_cap = cap;
+        size_t newsize = primes[0];
+        for (size_t i = 1; newsize <= cap && i < nprimes; i++)
            newsize = primes[i];
 
         table = new vec<Pair>[newsize];
         cap   = newsize;
 
-        for (int i = 0; i < old_cap; i++){
-            for (int j = 0; j < old[i].size(); j++){
+        for (size_t i = 0; i < old_cap; i++){
+            for (size_t j = 0; j < old[i].size(); j++){
                 _insert(old[i][j].key, old[i][j].data); }}
 
         delete [] old;
@@ -109,7 +109,7 @@ class Map {
         assert(size != 0);
         const D*         res = NULL;
         const vec<Pair>& ps  = table[index(k)];
-        for (int i = 0; i < ps.size(); i++)
+        for (size_t i = 0; i < ps.size(); i++)
             if (equals(ps[i].key, k))
                 res = &ps[i].data;
         assert(res != NULL);
@@ -122,7 +122,7 @@ class Map {
         assert(size != 0);
         D*         res = NULL;
         vec<Pair>& ps  = table[index(k)];
-        for (int i = 0; i < ps.size(); i++)
+        for (size_t i = 0; i < ps.size(); i++)
             if (equals(ps[i].key, k))
                 res = &ps[i].data;
         assert(res != NULL);
@@ -134,7 +134,7 @@ class Map {
     bool peek   (const K& k, D& d) const {
         if (size == 0) return false;
         const vec<Pair>& ps = table[index(k)];
-        for (int i = 0; i < ps.size(); i++)
+        for (size_t i = 0; i < ps.size(); i++)
             if (equals(ps[i].key, k)){
                 d = ps[i].data;
                 return true; } 
@@ -144,7 +144,7 @@ class Map {
     bool has   (const K& k) const {
         if (size == 0) return false;
         const vec<Pair>& ps = table[index(k)];
-        for (int i = 0; i < ps.size(); i++)
+        for (size_t i = 0; i < ps.size(); i++)
             if (equals(ps[i].key, k))
                 return true;
         return false;
@@ -154,7 +154,7 @@ class Map {
     void remove(const K& k) {
         assert(table != NULL);
         vec<Pair>& ps = table[index(k)];
-        int j = 0;
+        size_t j = 0;
         for (; j < ps.size() && !equals(ps[j].key, k); j++);
         assert(j < ps.size());
         ps[j] = ps.last();
@@ -168,8 +168,8 @@ class Map {
         table = NULL;
     }
 
-    int  elems() const { return size; }
-    int  bucket_count() const { return cap; }
+    size_t  elems() const { return size; }
+    size_t  bucket_count() const { return cap; }
 
     // NOTE: the hash and equality objects are not moved by this method:
     void moveTo(Map& other){
@@ -184,7 +184,7 @@ class Map {
     }
 
     // NOTE: given a bit more time, I could make a more C++-style iterator out of this:
-    const vec<Pair>& bucket(int i) const { return table[i]; }
+    const vec<Pair>& bucket(size_t i) const { return table[i]; }
 };
 
 //=================================================================================================

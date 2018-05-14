@@ -70,7 +70,7 @@ static int parseInt(B& in) {
 // number of characters.
 template<class B>
 static bool match(B& in, const char* str) {
-    int i;
+    size_t i;
     for (i = 0; str[i] != '\0'; i++)
         if (in[i] != str[i])
             return false;

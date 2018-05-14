@@ -31,7 +31,9 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #else
 
 #   include <stdint.h>
+#ifndef _MSC_VER
 #   include <inttypes.h>
+#endif
 
 #endif
 

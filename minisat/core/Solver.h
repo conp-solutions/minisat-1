@@ -98,11 +98,11 @@ public:
     lbool   value      (Lit p) const;       // The current value of a literal.
     lbool   modelValue (Var x) const;       // The value of a variable in the last model. The last call to solve must have been satisfiable.
     lbool   modelValue (Lit p) const;       // The value of a literal in the last model. The last call to solve must have been satisfiable.
-    int     nAssigns   ()      const;       // The current number of assigned literals.
-    int     nClauses   ()      const;       // The current number of original clauses.
-    int     nLearnts   ()      const;       // The current number of learnt clauses.
-    int     nVars      ()      const;       // The current number of variables.
-    int     nFreeVars  ()      const;
+    size_t  nAssigns   ()      const;       // The current number of assigned literals.
+    size_t  nClauses   ()      const;       // The current number of original clauses.
+    size_t  nLearnts   ()      const;       // The current number of learnt clauses.
+    size_t  nVars      ()      const;       // The current number of variables.
+    size_t  nFreeVars  ()      const;
     void    printStats ()      const;       // Print some current statistics to standard output.
 
     // Resource contraints:
@@ -149,7 +149,7 @@ public:
     double    learntsize_factor;  // The intitial limit for learnt clauses is a factor of the original clauses.                (default 1 / 3)
     double    learntsize_inc;     // The limit for learnt clauses is multiplied with this factor each restart.                 (default 1.1)
 
-    int       learntsize_adjust_start_confl;
+    size_t    learntsize_adjust_start_confl;
     double    learntsize_adjust_inc;
 
     // Statistics: (read-only member variable)
@@ -158,11 +158,12 @@ public:
     uint64_t dec_vars, num_clauses, num_learnts, clauses_literals, learnts_literals, max_literals, tot_literals;
 
 protected:
+    typedef Clause::AbsLevel AbsLevel;
 
     // Helper structures:
     //
-    struct VarData { CRef reason; int level; };
-    static inline VarData mkVarData(CRef cr, int l){ VarData d = {cr, l}; return d; }
+    struct VarData { CRef reason; size_t level; };
+    static inline VarData mkVarData(CRef cr, size_t l){ VarData d = {cr, l}; return d; }
 
     struct Watcher {
         CRef cref;
@@ -196,7 +197,7 @@ protected:
     vec<CRef>           clauses;          // List of problem clauses.
     vec<CRef>           learnts;          // List of learnt clauses.
     vec<Lit>            trail;            // Assignment stack; stores all assigments made in the order they were made.
-    vec<int>            trail_lim;        // Separator indices for different decision levels in 'trail'.
+    vec<size_t>         trail_lim;        // Separator indices for different decision levels in 'trail'.
     vec<Lit>            assumptions;      // Current set of assumptions provided to solve by the user.
 
     VMap<double>        activity;         // A heuristic measurement of the activity of a variable.
@@ -213,8 +214,8 @@ protected:
     bool                ok;               // If FALSE, the constraints are already unsatisfiable. No part of the solver state may be used!
     double              cla_inc;          // Amount to bump next clause with.
     double              var_inc;          // Amount to bump next variable with.
-    int                 qhead;            // Head of queue (as index into the trail -- no more explicit propagation queue in MiniSat).
-    int                 simpDB_assigns;   // Number of top-level assignments since last execution of 'simplify()'.
+    size_t              qhead;            // Head of queue (as index into the trail -- no more explicit propagation queue in MiniSat).
+    size_t              simpDB_assigns;   // Number of top-level assignments since last execution of 'simplify()'.
     int64_t             simpDB_props;     // Remaining number of propagations that must be made before next execution of 'simplify()'.
     double              progress_estimate;// Set by 'search()'.
     bool                remove_satisfied; // Indicates whether possibly inefficient linear scan for satisfied clauses should be performed in 'simplify'.
@@ -234,7 +235,7 @@ protected:
 
     double              max_learnts;
     double              learntsize_adjust_confl;
-    int                 learntsize_adjust_cnt;
+    size_t              learntsize_adjust_cnt;
 
     // Resource contraints:
     //
@@ -250,11 +251,11 @@ protected:
     void     uncheckedEnqueue (Lit p, CRef from = CRef_Undef);                         // Enqueue a literal. Assumes value of literal is undefined.
     bool     enqueue          (Lit p, CRef from = CRef_Undef);                         // Test if fact 'p' contradicts current state, enqueue otherwise.
     CRef     propagate        ();                                                      // Perform unit propagation. Returns possibly conflicting clause.
-    void     cancelUntil      (int level);                                             // Backtrack until a certain level.
-    void     analyze          (CRef confl, vec<Lit>& out_learnt, int& out_btlevel);    // (bt = backtrack)
+    void     cancelUntil      (size_t level);                                          // Backtrack until a certain level.
+    void     analyze          (CRef confl, vec<Lit>& out_learnt, size_t& out_btlevel); // (bt = backtrack)
     void     analyzeFinal     (Lit p, LSet& out_conflict);                             // COULD THIS BE IMPLEMENTED BY THE ORDINARIY "analyze" BY SOME REASONABLE GENERALIZATION?
     bool     litRedundant     (Lit p);                                                 // (helper method for 'analyze()')
-    lbool    search           (int nof_conflicts);                                     // Search for a given number of conflicts.
+    lbool    search           (ssize_t nof_conflicts);                                 // Search for a given number of conflicts.
     lbool    solve_           ();                                                      // Main solve method (assumptions given in 'assumptions').
     void     reduceDB         ();                                                      // Reduce the set of learnt clauses.
     void     removeSatisfied  (vec<CRef>& cs);                                         // Shrink 'cs' to contain only non-satisfied clauses.
@@ -286,10 +287,10 @@ protected:
 
     // Misc:
     //
-    int      decisionLevel    ()      const; // Gives the current decisionlevel.
-    uint32_t abstractLevel    (Var x) const; // Used to represent an abstraction of sets of decision levels.
+    size_t   decisionLevel    ()      const; // Gives the current decisionlevel.
+    AbsLevel abstractLevel    (Var x) const; // Used to represent an abstraction of sets of decision levels.
     CRef     reason           (Var x) const;
-    int      level            (Var x) const;
+    size_t   level            (Var x) const;
     double   progressEstimate ()      const; // DELETE THIS ?? IT'S NOT VERY USEFUL ...
     bool     withinBudget     ()      const;
     void     relocAll         (ClauseAllocator& to);
@@ -314,7 +315,7 @@ protected:
 // Implementation of inline methods:
 
 inline CRef Solver::reason(Var x) const { return vardata[x].reason; }
-inline int  Solver::level (Var x) const { return vardata[x].level; }
+inline size_t  Solver::level (Var x) const { return vardata[x].level; }
 
 inline void Solver::insertVarOrder(Var x) {
     if (!order_heap.inHeap(x) && decision[x]) order_heap.insert(x); }
@@ -324,7 +325,7 @@ inline void Solver::varBumpActivity(Var v) { varBumpActivity(v, var_inc); }
 inline void Solver::varBumpActivity(Var v, double inc) {
     if ( (activity[v] += inc) > 1e100 ) {
         // Rescale:
-        for (int i = 0; i < nVars(); i++)
+        for (size_t i = 0; i < nVars(); i++)
             activity[i] *= 1e-100;
         var_inc *= 1e-100; }
 
@@ -336,7 +337,7 @@ inline void Solver::claDecayActivity() { cla_inc *= (1 / clause_decay); }
 inline void Solver::claBumpActivity (Clause& c) {
         if ( (c.activity() += cla_inc) > 1e20 ) {
             // Rescale:
-            for (int i = 0; i < learnts.size(); i++)
+            for (size_t i = 0; i < learnts.size(); i++)
                 ca[learnts[i]].activity() *= 1e-20;
             cla_inc *= 1e-20; } }
 
@@ -358,18 +359,18 @@ inline bool     Solver::isRemoved       (CRef cr)         const { return ca[cr].
 inline bool     Solver::locked          (const Clause& c) const { return value(c[0]) == l_True && reason(var(c[0])) != CRef_Undef && ca.lea(reason(var(c[0]))) == &c; }
 inline void     Solver::newDecisionLevel()                      { trail_lim.push(trail.size()); }
 
-inline int      Solver::decisionLevel ()      const   { return trail_lim.size(); }
-inline uint32_t Solver::abstractLevel (Var x) const   { return 1 << (level(x) & 31); }
+inline size_t   Solver::decisionLevel ()      const   { return trail_lim.size(); }
+inline Solver::AbsLevel Solver::abstractLevel (Var x) const   { return 1 << (level(x) & (sizeof(AbsLevel)*8-1)); }
 inline lbool    Solver::value         (Var x) const   { return assigns[x]; }
 inline lbool    Solver::value         (Lit p) const   { return assigns[var(p)] ^ sign(p); }
 inline lbool    Solver::modelValue    (Var x) const   { return model[x]; }
 inline lbool    Solver::modelValue    (Lit p) const   { return model[var(p)] ^ sign(p); }
-inline int      Solver::nAssigns      ()      const   { return trail.size(); }
-inline int      Solver::nClauses      ()      const   { return num_clauses; }
-inline int      Solver::nLearnts      ()      const   { return num_learnts; }
-inline int      Solver::nVars         ()      const   { return next_var; }
+inline size_t   Solver::nAssigns      ()      const   { return trail.size(); }
+inline size_t   Solver::nClauses      ()      const   { return num_clauses; }
+inline size_t   Solver::nLearnts      ()      const   { return num_learnts; }
+inline size_t   Solver::nVars         ()      const   { return next_var; }
 // TODO: nFreeVars() is not quite correct, try to calculate right instead of adapting it like below:
-inline int      Solver::nFreeVars     ()      const   { return (int)dec_vars - (trail_lim.size() == 0 ? trail.size() : trail_lim[0]); }
+inline size_t   Solver::nFreeVars     ()      const   { return (size_t)dec_vars - (trail_lim.size() == 0 ? trail.size() : trail_lim[0]); }
 inline void     Solver::setPolarity   (Var v, lbool b){ user_pol[v] = b; }
 inline void     Solver::setDecisionVar(Var v, bool b) 
 { 
@@ -419,7 +420,7 @@ inline void     Solver::extendProof  (const T& clause, bool remove) {
     if (remove)
         s << "d ";
 
-    for (int i = 0; i < clause.size(); i++)
+    for (size_t i = 0; i < clause.size(); i++)
         s << (var(clause[i]) + 1) * (-2 * sign(clause[i]) + 1) << " ";
 
     fprintf(proofFile, "%s0\n", s.str().c_str());

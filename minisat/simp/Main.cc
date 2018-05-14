@@ -112,8 +112,8 @@ int main(int argc, char** argv)
         FILE* res = (argc >= 3) ? fopen(argv[2], "wb") : NULL;
 
         if (S.verbosity > 0){
-            printf("c |  Number of variables:  %12d                                         |\n", S.nVars());
-            printf("c |  Number of clauses:    %12d                                         |\n", S.nClauses()); }
+            printf("c |  Number of variables:  %12ld                                         |\n", S.nVars());
+            printf("c |  Number of clauses:    %12ld                                         |\n", S.nClauses()); }
         
         double parsed_time = cpuTime();
         if (S.verbosity > 0)
@@ -159,8 +159,8 @@ int main(int argc, char** argv)
         printf(ret == l_True ? "s SATISFIABLE\n" : ret == l_False ? "s UNSATISFIABLE\n" : "s UNKNOWN\n");
         if (ret == l_True && model){
                 std::stringstream s;
-                for (int i = 0; i < S.nVars(); i++)
-                    s << ((S.model[i]==l_True)?i+1:-i-1) << " ";
+                for (size_t i = 0; i < S.nVars(); i++)
+                    s << ((S.model[i]==l_True)?i+1:-(int)i-1) << " ";
                 printf("v %s0\n", s.str().c_str());
         }
 
@@ -169,9 +169,9 @@ int main(int argc, char** argv)
         if (res != NULL){
             if (ret == l_True){
                 fprintf(res, "s SATISFIABLE\n");
-                for (int i = 0; i < S.nVars(); i++)
+                for (size_t i = 0; i < S.nVars(); i++)
                     if (S.model[i] != l_Undef)
-                        fprintf(res, "%s%s%d", (i==0)?"":" ", (S.model[i]==l_True)?"":"-", i+1);
+                        fprintf(res, "%s%s%ld", (i==0)?"":" ", (S.model[i]==l_True)?"":"-", i+1);
                 fprintf(res, " 0\n");
             }else if (ret == l_False)
                 fprintf(res, "s UNSATISFIABLE\n");
