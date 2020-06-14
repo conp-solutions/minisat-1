@@ -111,6 +111,17 @@ static Int64Option opt_VSIDS_props_init_limit(_cat,
                                               "specifies the number of propagations before we start with LRB.",
                                               10000,
                                               Int64Range(1, INT64_MAX));
+static const char *cat2 = "LSIDS";
+
+static DoubleOption opt_lsids_phase(cat2,
+                                    "lsids-pick",
+                                    "Use LSIDS for phase selection. p : when diff between the literal activity is p "
+                                    "high then choose LSIDS, else polarity caching.",
+                                    0.5,
+                                    DoubleRange(0, true, 1, true));
+static DoubleOption opt_lsids_erase_weight(cat2, "lsids-erase-weight", "Weight for LSIDS bump", 2.0, DoubleRange(0, true, 5, true));
+static BoolOption opt_use_lsids(cat2, "lsids", "Use LSIDS as literal polarity heuristic", true);
+
 static DoubleOption opt_inprocessing_inc(_cat,
                                          "inprocess-delay",
                                          "Use this factor to wait for next inprocessing (0=off)",
@@ -167,7 +178,9 @@ Solver::Solver()
   , step_size_dec(opt_step_size_dec)
   , min_step_size(opt_min_step_size)
   , timer(5000)
+  , timer_lit(5000)
   , var_decay(opt_var_decay)
+  , lit_decay(opt_var_decay)
   , clause_decay(opt_clause_decay)
   , random_var_freq(opt_random_var_freq)
   , random_seed(opt_random_seed)
@@ -190,6 +203,8 @@ Solver::Solver()
   , learntsize_adjust_start_confl(100)
   , learntsize_adjust_inc(1.5)
 
+  , lsids_pick(opt_lsids_phase)
+  , lsids_erase_bump_weight(opt_lsids_erase_weight)
   // Statistics: (formerly in 'SolverStats')
   //
   , solves(0)
@@ -217,9 +232,12 @@ Solver::Solver()
   , VSIDS_propagations(opt_vsids_p)
   , reactivate_VSIDS(false)
 
+  , CBT(false)
+  , use_lsids(opt_use_lsids)
   , ok(true)
   , cla_inc(1)
   , var_inc(1)
+  , lit_inc(1)
   , watches_bin(WatcherDeleted(ca))
   , watches(WatcherDeleted(ca))
   , qhead(0)
@@ -686,6 +704,9 @@ Var Solver::newVar(bool sign, bool dvar)
     vardata.push(mkVarData(CRef_Undef, 0));
     activity_CHB.push(0);
     activity_VSIDS.push(rnd_init_act ? drand(random_seed) * 0.00001 : 0);
+    activity_lit.push(0);
+    activity_lit.push(0);
+
 
     picked.push(0);
     conflicted.push(0);
@@ -916,7 +937,10 @@ void Solver::cancelUntil(int bLevel)
 #ifdef PRINT_OUT
                 std::cout << "undo " << x << "\n";
 #endif
-                if (phase_saving > 1 || ((phase_saving == 1) && c > trail_lim.last())) polarity[x] = sign(trail[c]);
+                if (phase_saving > 1 || (phase_saving == 1) && c > trail_lim.last()) {
+                    polarity[x] = sign(trail[c]);
+                    litBumpActivity(mkLit(x, !polarity[x]), lsids_erase_bump_weight);
+                }
                 insertVarOrder(x);
             }
         }
@@ -939,6 +963,9 @@ void Solver::cancelUntil(int bLevel)
 Lit Solver::pickBranchLit()
 {
     Var next = var_Undef;
+    Lit lit = lit_Undef;
+    float diff_ratio = 1;
+
     //    Heap<VarOrderLt>& order_heap = VSIDS ? order_heap_VSIDS : order_heap_CHB;
     Heap<VarOrderLt> &order_heap = VSIDS ? order_heap_VSIDS : (DISTANCE ? order_heap_distance : order_heap_CHB);
 
@@ -974,7 +1001,12 @@ Lit Solver::pickBranchLit()
     if (posMissingInSome == 0 || negMissingInSome == 0)
         return posMissingInSome == 0 ? mkLit(next, false) : mkLit(next, true);
 
-    return mkLit(next, polarity[next]);
+    if (CBT && use_lsids) {
+        lit = pickLsidsBasedPhase(next);
+        return lit;
+    } else {
+        return mkLit(next, polarity[next]);
+    }
 }
 
 inline Solver::ConflictData Solver::FindConflictLevel(CRef cind)
@@ -1084,7 +1116,8 @@ void Solver::analyze(CRef confl, vec<Lit> &out_learnt, int &out_btlevel, int &ou
             if (!seen[var(q)] && level(var(q)) > 0) {
                 if (VSIDS) {
                     varBumpActivity(var(q), .5);
-                    add_tmp.push(q);
+                    if(use_lsids) litBumpActivity(~q, .5);
+                    else add_tmp.push(q);
                 } else
                     conflicted[var(q)]++;
                 seen[var(q)] = 1;
@@ -1170,9 +1203,20 @@ void Solver::analyze(CRef confl, vec<Lit> &out_learnt, int &out_btlevel, int &ou
         for (int i = 0; i < add_tmp.size(); i++) {
             Var v = var(add_tmp[i]);
             if (level(v) >= out_btlevel - 1) varBumpActivity(v, 1);
+            litBumpActivity(~add_tmp[i], 1);
         }
         add_tmp.clear();
     } else {
+        if(use_lsids) {
+            for (int i = 0; i < add_tmp.size(); i++) {
+                Var v = var(add_tmp[i]);
+                if (level(v) >= out_btlevel - 1) {
+                    litBumpActivity(~add_tmp[i], 1);
+                }
+            }
+            add_tmp.clear();
+        }
+
         seen[var(p)] = true;
         for (int i = out_learnt.size() - 1; i >= 0; i--) {
             Var v = var(out_learnt[i]);
@@ -1944,6 +1988,7 @@ lbool Solver::search(int &nof_conflicts)
 
         if (confl != CRef_Undef) {
             // CONFLICT
+            if (--timer_lit == 0 && lit_decay < 0.95) timer_lit = 5000, lit_decay += 0.01;
             if (VSIDS) {
                 if (--timer == 0 && var_decay < 0.95) timer = 5000, var_decay += 0.01;
             } else if (step_size > min_step_size)
@@ -1982,10 +2027,12 @@ lbool Solver::search(int &nof_conflicts)
             if ((confl_to_chrono < 0 || confl_to_chrono <= (int64_t)conflicts) && chrono > -1 &&
                 (decisionLevel() - backtrack_level) >= chrono) {
                 ++chrono_backtrack;
+                CBT = true;
                 cancelUntil(data.nHighestLevel - 1);
             } else // default behavior
             {
                 ++non_chrono_backtrack;
+                CBT = false;
                 cancelUntil(backtrack_level);
             }
 
@@ -2033,6 +2080,7 @@ lbool Solver::search(int &nof_conflicts)
             }
 
             if (VSIDS) varDecayActivity();
+            litDecayActivity();
             claDecayActivity();
 
             /*if (--learntsize_adjust_cnt == 0){
