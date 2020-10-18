@@ -1,0 +1,73 @@
+# Author: Norbert Manthey <nmanthey@amazon.de>
+#
+# This workflow will present introduced defects of a pull request to a given
+# branch of a package.
+#
+# The workflow has locations labeled '[ACTION REQUIRED]' where adaptation for
+# your build might be required, as well as where to compare the findings to.
+#
+# To learn more about the available options, check the CLI parameters of the
+# script 'one-line-cr-bot.sh' in https://github.com/awslabs/one-line-scan.git
+name: One Line CR Bot
+
+on:
+  pull_request:
+    # [ACTION REQUIRED] Set the branch you want to analyze PRs for
+    branches: [ master ]
+
+  # [ACTION REQUIRED] Use this, if you want analysis for push to repository as well
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    # Get the code, fetch the full history to make sure we have the compare commit as well
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    # one-line-cr-bot.sh will get infer and cppcheck, if not available
+    - name: Install CppCheck Package
+      env:
+        # This is needed in addition to -yq to prevent apt-get from asking for user input
+        DEBIAN_FRONTEND: noninteractive
+      # [ACTION REQUIRED] Add your build dependencies here, drop cppcheck to get latest cppcheck
+      run: |
+        sudo apt-get install -y cppcheck
+        sudo apt-get install -y zlib1g-dev
+
+    # Get the comare remote
+    - name: Setup Compare Remote
+      # [ACTION REQUIRED] Add the https URL of your repository
+      run: git remote add compare https://github.com/conp-solutions/mergesat.git
+    - name: Fetch Compare Remote
+      run: git fetch compare
+
+    # Get one-line-scan, the tool we will use for analysis
+    - name: Get OneLineScan
+      run:  git clone -b one-line-cr-bot https://github.com/nmanthey/one-line-scan.git ../one-line-scan
+
+    # Check how repository is setup
+    - name: Diagnose Git Setup
+      run: |
+        git remote -v
+        git branch -a
+        git log --pretty=oneline --decorate --graph | head -n 30
+
+    # Run the analysis, parameterized for this package
+    - name: one-line-cr-analysis
+      env:
+        # [ACTION REQUIRED] Adapt the values below accordingly
+        BASE_COMMIT: "compare/master" # 'compare' is the name of the remote to use
+        BUILD_COMMAND: "make -B r lr"
+        CLEAN_COMMAND: "make clean"
+        # These settings are more preferences, and not directly related to your project
+        OVERRIDE_ANALYSIS_ERROR: true
+        REPORT_NEW_ONLY: true
+        VERBOSE: 1 # >0 shows all currently present defects as well
+      run: ../one-line-scan/one-line-cr-bot.sh
+
