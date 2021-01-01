@@ -1441,11 +1441,7 @@ CRef Solver::propagate()
             Lit the_other = ws_bin[k].blocker;
             if (value(the_other) == l_False) {
                 confl = ws_bin[k].cref;
-#ifdef LOOSE_PROP_STAT
                 return confl;
-#else
-                goto ExitProp;
-#endif
             } else if (value(the_other) == l_Undef) {
                 uncheckedEnqueue(the_other, currLevel, ws_bin[k].cref);
 #ifdef PRINT_OUT
