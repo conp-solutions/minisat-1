@@ -13,6 +13,8 @@ called Distance at the beginning of search MapleLCMDistChronoBT-DL, based on Map
 Stepan Kochemazov, Oleg Zaikin, Victor Kondratiev, Alexander Semenov: The solver was augmented with heuristic that moves
 duplicate learnt clauses into the core/tier2 tiers depending on a number of parameters.
 
+UWrMaxSat based on KP-MiniSat+ -- Copyright (c) 2019-2020 Marek Piotrów: avoid watching assumption literals
+
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
 associated documentation files (the "Software"), to deal in the Software without restriction,
 including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -1480,13 +1482,21 @@ CRef Solver::propagate()
             }
 
             // Look for new watch:
-            for (int k = 2; k < c.size(); k++)
+            int watchPos = 0, avoidLevel = assumptions.size();
+            for (int k = 2; k < c.size(); k++) {
                 if (value(c[k]) != l_False) {
-                    c[1] = c[k];
-                    c[k] = false_lit;
-                    watches[~c[1]].push(w);
-                    goto NextClause;
+                    watchPos = k; /* memorize that we found one literal we can watch */
+                    if (level(var(c[k])) > avoidLevel) break;
                 }
+            }
+
+            /* found a position to watch, watch the clause */
+            if (watchPos != 0) {
+                c[1] = c[watchPos];
+                c[watchPos] = false_lit;
+                watches[~c[1]].push(w);
+                goto NextClause;
+            }
 
             // Did not find watch -- clause is unit under assignment:
             *j++ = w;
