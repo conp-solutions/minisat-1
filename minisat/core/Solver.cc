@@ -133,6 +133,9 @@ static Int64Option opt_inprocessing_penalty(_cat,
 static BoolOption opt_check_sat(_cat, "check-sat", "Store duplicate of formula and check SAT answers", false);
 static IntOption opt_checkProofOnline(_cat, "check-proof", "Check proof during run time", 0, IntRange(0, 10));
 
+static IntOption
+opt_sort_learnt_limit(_cat, "learnt-sort-limit", "Controls size of learnt clauses to be sorted", 100, IntRange(0, INT32_MAX));
+
 //=================================================================================================
 // Constructor/Destructor:
 
@@ -199,6 +202,7 @@ Solver::Solver()
   //
   , learntsize_adjust_start_confl(100)
   , learntsize_adjust_inc(1.5)
+  , sort_learnt_limit(opt_sort_learnt_limit)
 
   // Statistics: (formerly in 'SolverStats')
   //
@@ -1055,6 +1059,12 @@ inline Solver::ConflictData Solver::FindConflictLevel(CRef cind)
 }
 
 
+struct lit_level_gt {
+    vec<Solver::VarData> &vardata;
+    lit_level_gt(vec<Solver::VarData> &_vardata) : vardata(_vardata) {}
+    bool operator()(Lit x, Lit y) const { return vardata[var(x)].level > vardata[var(y)].level; }
+};
+
 /*_________________________________________________________________________________________________
 |
 |  analyze : (confl : Clause*) (out_learnt : vec<Lit>&) (out_btlevel : int&)  ->  [void]
@@ -1190,6 +1200,13 @@ void Solver::analyze(CRef confl, vec<Lit> &out_learnt, int &out_btlevel, int &ou
     out_lbd = computeLBD(out_learnt);
     if (out_lbd <= 6 && out_learnt.size() <= 30)                          // Try further minimization?
         if (binResMinimize(out_learnt)) out_lbd = computeLBD(out_learnt); // Recompute LBD if minimized.
+
+    /* sort literals with descending levels */
+    if (out_learnt.size() < sort_learnt_limit) {
+        sort<Lit>(&(out_learnt[0]), out_learnt.size(), lit_level_gt(vardata));
+    }
+    assert((out_learnt.size() < 2 || level(var(out_learnt[0])) > level(var(out_learnt[1]))) &&
+           "First literal in learned clause has to be UIP literal!");
 
     // Find correct backtrack level:
     //

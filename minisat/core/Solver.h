@@ -240,6 +240,8 @@ class Solver
     int learntsize_adjust_start_confl;
     double learntsize_adjust_inc;
 
+    int sort_learnt_limit; // If the learned clause is smaller than this limit, sort its literals descending in their level
+
     // Statistics: (read-only member variable)
     //
     uint64_t solves, starts, decisions, rnd_decisions, propagations, conflicts, conflicts_VSIDS;
@@ -282,9 +284,6 @@ class Solver
 
     } statistics;
 
-    protected:
-    OnlineProofChecker *onlineDratChecker;
-
     // Helper structures:
     //
     struct VarData {
@@ -312,6 +311,9 @@ class Solver
         int secondHighestLevel;
         bool bOnlyOneLitFromHighest;
     };
+
+    protected:
+    OnlineProofChecker *onlineDratChecker;
 
     // Solver state:
     //
