@@ -132,6 +132,14 @@ static Int64Option opt_inprocessing_penalty(_cat,
                                             Int64Range(0, INT64_MAX));
 static BoolOption opt_check_sat(_cat, "check-sat", "Store duplicate of formula and check SAT answers", false);
 static IntOption opt_checkProofOnline(_cat, "check-proof", "Check proof during run time", 0, IntRange(0, 10));
+static IntOption
+opt_binary_pre_propagate("UP Hack",
+                         "pre-binary",
+                         "For X enqueued literals, propagate all binary clauses before propagating longer clauses",
+                         INT32_MAX,
+                         IntRange(0, INT32_MAX));
+static BoolOption
+opt_eager_binary_propagate("UP Hack", "eager-binary", "Propagate binary clauses right after enqueuing literals with a longer clause", true);
 
 //=================================================================================================
 // Constructor/Destructor:
@@ -216,6 +224,9 @@ Solver::Solver()
   , tot_literals(0)
   , chrono_backtrack(0)
   , non_chrono_backtrack(0)
+
+  , binary_pre_propagate(opt_binary_pre_propagate)
+  , binary_propagate_at_enqueue(opt_eager_binary_propagate)
 
   , systematic_branching_state(0)
   , posMissingInSome(opt_almost_pure ? 0 : 1)
@@ -1439,9 +1450,9 @@ CRef Solver::propagate()
         num_props++;
 
         /* propagate on binary clauses with current qhead */
-        CRef bin_confl = propagate_binary(&bhead);
+        confl = propagate_binary(&bhead);
         assert(bhead >= qhead && "at least propagate all binary clauses of literals we propagate");
-        if (bin_confl != CRef_Undef) return bin_confl;
+        if (confl != CRef_Undef) goto propagation_out;
 
         for (i = j = (Watcher *)ws, end = i + ws.size(); i != end;) {
             // Try to avoid inspecting the clause:
@@ -1507,7 +1518,20 @@ CRef Solver::propagate()
                     uncheckedEnqueue(first, nMaxLevel, cr);
 #ifdef PRINT_OUT
                     std::cout << "i " << first << " l " << nMaxLevel << "\n";
+
 #endif
+
+                    if (binary_propagate_at_enqueue) {
+                        /* propagate on binary clauses with current qhead */
+                        CRef dr = confl;
+                        confl = propagate_binary(&bhead);
+                        assert(dr == CRef_Undef);
+                        assert(bhead >= qhead && "at least propagate all binary clauses of literals we propagate");
+                        if (confl != CRef_Undef) {
+                            while (i < end) *j++ = *i++;
+                            qhead = trail.size();
+                        }
+                    }
                 }
             }
 
@@ -1516,6 +1540,7 @@ CRef Solver::propagate()
         ws.shrink(i - j);
     }
 
+propagation_out:;
     propagations += num_props;
     simpDB_props -= num_props;
 
@@ -1524,20 +1549,25 @@ CRef Solver::propagate()
 
 CRef Solver::propagate_binary(int *bhead)
 {
-    Lit p = trail[(*bhead)++]; // 'p' is enqueued fact to propagate.
-    const int currLevel = level(var(p));
-    vec<Watcher> &ws_bin = watches_bin[p]; // Propagate binary clauses first.
-    for (int k = 0; k < ws_bin.size(); k++) {
-        Lit the_other = ws_bin[k].blocker;
-        if (value(the_other) == l_False) {
-            return ws_bin[k].cref;
-        } else if (value(the_other) == l_Undef) {
-            uncheckedEnqueue(the_other, currLevel, ws_bin[k].cref);
+    /* propagate binary clauses until completion, based on parameter. Run at least once, for completeness */
+    do {
+        if (*bhead >= trail.size()) break; /* we might have done this right at enqeue already */
+
+        Lit p = trail[(*bhead)++]; // 'p' is enqueued fact to propagate.
+        const int currLevel = level(var(p));
+        vec<Watcher> &ws_bin = watches_bin[p]; // Propagate binary clauses first.
+        for (int k = 0; k < ws_bin.size(); k++) {
+            Lit the_other = ws_bin[k].blocker;
+            if (value(the_other) == l_False) {
+                return ws_bin[k].cref;
+            } else if (value(the_other) == l_Undef) {
+                uncheckedEnqueue(the_other, currLevel, ws_bin[k].cref);
 #ifdef PRINT_OUT
-            std::cout << "i " << the_other << " l " << currLevel << "\n";
+                std::cout << "i " << the_other << " l " << currLevel << "\n";
 #endif
+            }
         }
-    }
+    } while ((*bhead) + binary_pre_propagate < (size_t)trail.size());
     return CRef_Undef;
 }
 
