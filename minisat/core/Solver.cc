@@ -1429,6 +1429,8 @@ CRef Solver::propagate()
     watches.cleanAll();
     watches_bin.cleanAll();
 
+    int bhead = qhead; /* track literal to be propagated on binary clauses */
+
     while (qhead < trail.size()) {
         Lit p = trail[qhead++]; // 'p' is enqueued fact to propagate.
         int currLevel = level(var(p));
@@ -1436,19 +1438,10 @@ CRef Solver::propagate()
         Watcher *i, *j, *end;
         num_props++;
 
-        vec<Watcher> &ws_bin = watches_bin[p]; // Propagate binary clauses first.
-        for (int k = 0; k < ws_bin.size(); k++) {
-            Lit the_other = ws_bin[k].blocker;
-            if (value(the_other) == l_False) {
-                confl = ws_bin[k].cref;
-                return confl;
-            } else if (value(the_other) == l_Undef) {
-                uncheckedEnqueue(the_other, currLevel, ws_bin[k].cref);
-#ifdef PRINT_OUT
-                std::cout << "i " << the_other << " l " << currLevel << "\n";
-#endif
-            }
-        }
+        /* propagate on binary clauses with current qhead */
+        CRef bin_confl = propagate_binary(&bhead);
+        assert(bhead >= qhead && "at least propagate all binary clauses of literals we propagate");
+        if (bin_confl != CRef_Undef) return bin_confl;
 
         for (i = j = (Watcher *)ws, end = i + ws.size(); i != end;) {
             // Try to avoid inspecting the clause:
@@ -1533,6 +1526,24 @@ CRef Solver::propagate()
     return confl;
 }
 
+CRef Solver::propagate_binary(int *bhead)
+{
+    Lit p = trail[(*bhead)++]; // 'p' is enqueued fact to propagate.
+    const int currLevel = level(var(p));
+    vec<Watcher> &ws_bin = watches_bin[p]; // Propagate binary clauses first.
+    for (int k = 0; k < ws_bin.size(); k++) {
+        Lit the_other = ws_bin[k].blocker;
+        if (value(the_other) == l_False) {
+            return ws_bin[k].cref;
+        } else if (value(the_other) == l_Undef) {
+            uncheckedEnqueue(the_other, currLevel, ws_bin[k].cref);
+#ifdef PRINT_OUT
+            std::cout << "i " << the_other << " l " << currLevel << "\n";
+#endif
+        }
+    }
+    return CRef_Undef;
+}
 
 /*_________________________________________________________________________________________________
 |
