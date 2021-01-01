@@ -246,6 +246,8 @@ class Solver
     uint64_t dec_vars, clauses_literals, learnts_literals, max_literals, tot_literals;
     uint64_t chrono_backtrack, non_chrono_backtrack;
 
+    uint64_t max_prop_queue_len;
+
     /* propagate binary clauses until completion */
     uint64_t binary_pre_propagate; /// for X more literals on the trail already propagate binaries, before propagating longer clauses
     bool binary_propagate_at_enqueue; /// eagerly propagate binary clauses right when enqueuing a literal by a larger clause

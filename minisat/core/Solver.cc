@@ -225,6 +225,7 @@ Solver::Solver()
   , chrono_backtrack(0)
   , non_chrono_backtrack(0)
 
+  , max_prop_queue_len(0)
   , binary_pre_propagate(opt_binary_pre_propagate)
   , binary_propagate_at_enqueue(opt_eager_binary_propagate)
 
@@ -1448,6 +1449,7 @@ CRef Solver::propagate()
         vec<Watcher> &ws = watches[p];
         Watcher *i, *j, *end;
         num_props++;
+        max_prop_queue_len = trail.size() - qhead > max_prop_queue_len ? trail.size() - qhead : max_prop_queue_len;
 
         /* propagate on binary clauses with current qhead */
         confl = propagate_binary(&bhead);

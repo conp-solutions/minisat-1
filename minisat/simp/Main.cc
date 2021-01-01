@@ -72,6 +72,7 @@ void printStats(Solver &solver)
     printf("c Stats:                : %lf solve, %lu steps, %lf simp, %lu steps, %d var, budget: %d\n",
            solver.statistics.solveSeconds, solver.statistics.solveSteps, solver.statistics.simpSeconds,
            solver.statistics.simpSteps, solver.nVars(), solver.withinBudget());
+    printf("c propagation max queue size: %ld\n", solver.max_prop_queue_len);
 
     if (mem_used != 0) printf("c Memory used           : %.2f MB\n", mem_used);
     printf("c CPU time              : %g s\n", cpu_time);
