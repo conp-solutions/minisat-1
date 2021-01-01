@@ -1485,14 +1485,9 @@ CRef Solver::propagate()
                 // Copy the remaining watches:
                 while (i < end) *j++ = *i++;
             } else {
-                if (currLevel == decisionLevel()) {
-                    uncheckedEnqueue(first, currLevel, cr);
-#ifdef PRINT_OUT
-                    std::cout << "i " << first << " l " << currLevel << "\n";
-#endif
-                } else {
-                    int nMaxLevel = currLevel;
-                    int nMaxInd = 1;
+                int nMaxLevel = currLevel;
+                int nMaxInd = 1;
+                if (currLevel != decisionLevel()) {
                     // pass over all the literals in the clause and find the one with the biggest level
                     for (int nInd = 2; nInd < c.size(); ++nInd) {
                         int nLevel = level(var(c[nInd]));
@@ -1501,13 +1496,14 @@ CRef Solver::propagate()
                             nMaxInd = nInd;
                         }
                     }
-
                     if (nMaxInd != 1) {
                         std::swap(c[1], c[nMaxInd]);
                         j--; // undo last watch
                         watches[~c[1]].push(w);
                     }
+                }
 
+                if (nMaxInd == 1) {
                     uncheckedEnqueue(first, nMaxLevel, cr);
 #ifdef PRINT_OUT
                     std::cout << "i " << first << " l " << nMaxLevel << "\n";
