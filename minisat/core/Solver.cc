@@ -139,6 +139,8 @@ static Int64Option opt_inprocessing_penalty(_cat,
 static BoolOption opt_check_sat(_cat, "check-sat", "Store duplicate of formula and check SAT answers", false);
 static IntOption opt_checkProofOnline(_cat, "check-proof", "Check proof during run time", 0, IntRange(0, 10));
 
+static BoolOption opt_use_ccnr("SLS", "use-ccnr", "Use SLS engine CCNR", true);
+
 //=================================================================================================
 // Constructor/Destructor:
 
@@ -329,6 +331,7 @@ Solver::Solver()
   , DISTANCE(true)
 
   // for ccnr integration
+  , use_ccnr(opt_use_ccnr)
   , restarts_gap(300)
   , conflict_ratio(0.4)
   , percent_ratio(0.9)
@@ -2920,6 +2923,8 @@ void Solver::garbageCollect()
 
 bool Solver::call_ls(bool use_up_build)
 {
+    if(!use_ccnr) return false;
+
     ccnr = CCNR::ls_solver();
     int ls_var_nums = nVars();
     int ls_cls_nums = nClauses() + learnts_core.size() + learnts_tier2.size();
