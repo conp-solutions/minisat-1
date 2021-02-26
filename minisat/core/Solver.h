@@ -470,7 +470,8 @@ class Solver
     bool litRedundant(Lit p, uint32_t abstract_levels);       // (helper method for 'analyze()')
     lbool search(int &nof_conflicts);                         // Search for a given number of conflicts.
     lbool solve_();                                           // Main solve method (assumptions given in 'assumptions').
-    void reduceDB();                                          // Reduce the set of learnt clauses.
+    void rephase();  // Modify the phase to be used when selecting the next variable
+    void reduceDB(); // Reduce the set of learnt clauses.
     void reduceDB_Tier2();
     void removeSatisfied(vec<CRef> &cs); // Shrink 'cs' to contain only non-satisfied clauses.
     void safeRemoveSatisfied(vec<CRef> &cs, unsigned valid_mark);
@@ -715,7 +716,9 @@ class Solver
     float up_time_ratio;
     //  control ls memory use per call.
     long long ls_mems_num;
-    int state_change_time; // starts
+    int state_change_time;                // starts
+    uint64_t next_rephase_conflict_count; // limit of conflicts to be used
+    float next_rephase_conflict_count_inc;
     //  whether the mediation_soln is used as rephase, if not
     bool mediation_used;
 
@@ -729,6 +732,7 @@ class Solver
     int ls_call_num = 0;
     int ls_best_unsat_num = INT_MAX;
     bool solved_by_ls = false, initial_sls, use_sls_phase = true;
+    int rephase_mode = 0; // was: use_sls_phase = true;
     int max_trail = 0;
 
 
