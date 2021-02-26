@@ -11,6 +11,8 @@ minimization approach for cdcl sat solvers,” in IJCAI-2017, 2017, pp. to–app
 Maple_LCM_Dist, Based on Maple_LCM -- Copyright (c) 2017, Fan Xiao, Chu-Min LI, Mao Luo: using a new branching heuristic
 called Distance at the beginning of search
 
+Maple_LCM_Dist-alluip-trail -- Copyright (c) 2020, Randy Hickey and Fahiem Bacchus,
+Based on Trail Saving on Backtrack SAT 2020 paper.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
 associated documentation files (the "Software"), to deal in the Software without restriction,
@@ -225,7 +227,7 @@ class Solver
     double clause_decay;
     double random_var_freq;
     double random_seed;
-    bool VSIDS;
+
     int ccmin_mode;      // Controls conflict clause minimization (0=none, 1=basic, 2=deep).
     int phase_saving;    // Controls the level of phase saving (0=none, 1=limited, 2=full).
     bool rnd_pol;        // Use random polarities for branching heuristics.
@@ -245,6 +247,7 @@ class Solver
     uint64_t solves, starts, decisions, rnd_decisions, propagations, conflicts, conflicts_VSIDS;
     uint64_t dec_vars, clauses_literals, learnts_literals, max_literals, tot_literals;
     uint64_t chrono_backtrack, non_chrono_backtrack;
+    uint64_t backuped_trail_lits, used_backup_lits;
 
     vec<uint32_t> picked;
     vec<uint32_t> conflicted;
@@ -340,11 +343,33 @@ class Solver
     vec<int> trail_lim;   // Separator indices for different decision levels in 'trail'.
     vec<VarData> vardata; // Stores reason and level for each variable.
     int qhead;            // Head of queue (as index into the trail -- no more explicit propagation queue in MiniSat).
-    int simpDB_assigns;   // Number of top-level assignments since last execution of 'simplify()'.
+    bool use_backuped_trail; // store the trail during backtracking, and use it during propagation
+    int old_trail_qhead;     // head of trail stored during backtracking
+    vec<Lit> old_trail;      // trail stored during backtracking
+    vec<CRef> oldreasons;    // reason clauses of trail stored during backtracking
+    int simpDB_assigns;      // Number of top-level assignments since last execution of 'simplify()'.
     int64_t simpDB_props; // Remaining number of propagations that must be made before next execution of 'simplify()'.
     vec<Lit> assumptions; // Current set of assumptions provided to solve by the user.
-    Heap<VarOrderLt> order_heap_CHB, // A priority queue of variables ordered with respect to the variable activity.
-    order_heap_VSIDS, order_heap_distance;
+
+    /* list the possible modes the decision heuristic could be in */
+    enum decision_heuristic {
+        VSIDS_CHB,      /* in VSIDS, switching back to CHB */
+        VSIDS_DISTANCE, /* in VSIDS, switching back to DISTANCE */
+        CHB,
+        DISTANCE
+    };
+    decision_heuristic current_heuristic;
+    bool usesVSIDS();
+    bool usesCHB();
+    bool usesDISTANCE();
+    bool considersDISTANCE();
+    void disableDISTANCEheuristic();
+    void enableDISTANCEheuristic();
+    vec<Var> decision_rebuild_vars; // Set of variables that need to be used as decisions
+    vec<int> distance_level_incs;
+    Heap<VarOrderLt> order_heap_VSIDS, order_heap_CHB, order_heap_DISTANCE;
+    Heap<VarOrderLt> *order_heap; // A priority queue of variables ordered with respect to the variable activity.
+
     int full_heap_size; // Store size of heap in case it is completely filled, to be able to compare it to current size
     double progress_estimate; // Set by 'search()'.
     bool remove_satisfied; // Indicates whether possibly inefficient linear scan for satisfied clauses should be performed in 'simplify'.
@@ -469,7 +494,7 @@ class Solver
     void uncheckedEnqueue(Lit p, int level, CRef from = CRef_Undef); // Enqueue a literal. Assumes value of literal is undefined.
     bool enqueue(Lit p, CRef from = CRef_Undef); // Test if fact 'p' contradicts current state, enqueue otherwise.
     CRef propagate();                            // Perform unit propagation. Returns possibly conflicting clause.
-    void cancelUntil(int level);                 // Backtrack until a certain level.
+    void cancelUntil(int level, bool allow_trail_saving = true);                    // Backtrack until a certain level.
     void analyze(CRef confl, vec<Lit> &out_learnt, int &out_btlevel, int &out_lbd); // (bt = backtrack)
     void analyzeFinal(Lit p, vec<Lit> &out_conflict); // COULD THIS BE IMPLEMENTED BY THE ORDINARIY "analyze" BY SOME REASONABLE
     void analyzeFinal(const CRef cr, vec<Lit> &out_conflict); // Find all assumptions that lead to the given conflict clause
@@ -493,10 +518,10 @@ class Solver
 
     // Operations on clauses:
     //
-    void attachClause(CRef cr);                      // Attach a clause to watcher lists.
-    void detachClause(CRef cr, bool strict = false); // Detach a clause to watcher lists.
-    void removeClause(CRef cr);                      // Detach and free a clause.
-    void removeSatisfiedClause(CRef cr);
+    void attachClause(CRef cr);                                // Attach a clause to watcher lists.
+    void detachClause(CRef cr, bool strict = false);           // Detach a clause to watcher lists.
+    void removeClause(CRef cr, bool remove_from_proof = true); // Detach and free a clause.
+    void removeSatisfiedClause(CRef cr, bool remove_from_proof = true);
     bool locked(const Clause &c) const; // Returns TRUE if a clause is a reason for some implication in the current state.
     bool satisfied(const Clause &c) const; // Returns TRUE if a clause is satisfied in the current state.
 
@@ -671,6 +696,7 @@ class Solver
     public:
     bool simplifyAll();
     template <class C> void simplifyLearnt(C &c);
+    bool isSimplifyDuplicate(CRef cr);
     /** simplify the learnt clauses in the given vector, move to learnt_core if is_tier2 is true*/
     bool simplifyLearnt(vec<CRef> &target_learnts, bool is_tier2 = false);
     int trailRecord;
@@ -680,11 +706,12 @@ class Solver
     CRef simplePropagate();
     uint64_t nbSimplifyAll;
     uint64_t simplified_length_record, original_length_record;
-    uint64_t s_propagations;
+    uint64_t s_propagations, nr_lcm_duplicates;
 
     vec<Lit> simp_learnt_clause;
     vec<CRef> simp_reason_clause;
     void simpleAnalyze(CRef confl, vec<Lit> &out_learnt, vec<CRef> &reason_clause, bool True_confl);
+    ClauseRingBuffer simplifyBuffer;
 
     // in redundant
     bool removed(CRef cr);
@@ -708,7 +735,8 @@ class Solver
     double var_iLevel_inc;
     vec<Lit> involved_lits;
     double my_var_decay;
-    bool DISTANCE;
+
+    void reset_old_trail();
 };
 
 // Method to update cli options from the environment variable MINISAT_RUNTIME_ARGS
@@ -729,8 +757,7 @@ inline int Solver::level(Var x) const { return vardata[x].level; }
 
 inline void Solver::insertVarOrder(Var x)
 {
-    Heap<VarOrderLt> &order_heap = VSIDS ? order_heap_VSIDS : (DISTANCE ? order_heap_distance : order_heap_CHB);
-    if (!order_heap.inHeap(x) && decision[x]) order_heap.insert(x);
+    if (!order_heap->inHeap(x) && decision[x]) order_heap->insert(x);
 }
 
 inline void Solver::varDecayActivity() { var_inc *= (1 / var_decay); }
@@ -744,7 +771,9 @@ inline void Solver::varBumpActivity(Var v, double mult)
     }
 
     // Update order_heap with respect to new activity:
-    if (order_heap_VSIDS.inHeap(v)) order_heap_VSIDS.decrease(v);
+    if (usesVSIDS()) {
+        if (order_heap->inHeap(v)) order_heap->decrease(v);
+    }
 }
 
 inline void Solver::claDecayActivity() { cla_inc *= (1 / clause_decay); }
@@ -826,10 +855,8 @@ inline void Solver::setDecisionVar(Var v, bool b)
         dec_vars--;
 
     decision[v] = b;
-    if (b && !order_heap_CHB.inHeap(v)) {
-        order_heap_CHB.insert(v);
-        order_heap_VSIDS.insert(v);
-        order_heap_distance.insert(v);
+    if (b && !order_heap->inHeap(v)) {
+        order_heap->insert(v);
     }
 }
 inline void Solver::setConfBudget(int64_t x) { conflict_budget = conflicts + x; }
@@ -916,6 +943,14 @@ inline void Solver::toDimacs(const char *file, Lit p, Lit q, Lit r)
     as.push(r);
     toDimacs(file, as);
 }
+
+inline bool Solver::usesVSIDS() { return current_heuristic == VSIDS_CHB || current_heuristic == VSIDS_DISTANCE; }
+
+inline bool Solver::usesDISTANCE() { return current_heuristic == DISTANCE; }
+
+inline bool Solver::considersDISTANCE() { return current_heuristic == DISTANCE || current_heuristic == VSIDS_DISTANCE; }
+
+inline bool Solver::usesCHB() { return current_heuristic == CHB; }
 
 inline void Solver::setTermCallback(void *state, int (*termCallback)(void *))
 {

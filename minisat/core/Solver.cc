@@ -13,6 +13,10 @@ called Distance at the beginning of search MapleLCMDistChronoBT-DL, based on Map
 Stepan Kochemazov, Oleg Zaikin, Victor Kondratiev, Alexander Semenov: The solver was augmented with heuristic that moves
 duplicate learnt clauses into the core/tier2 tiers depending on a number of parameters.
 
+Maple_LCM_Dist-alluip-trail -- Copyright (c) 2020, Randy Hickey and Fahiem Bacchus,
+Based on Trail Saving on Backtrack SAT 2020 paper.
+UWrMaxSat based on KP-MiniSat+ -- Copyright (c) 2019-2020 Marek Piotrów: avoid watching assumption literals
+
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
 associated documentation files (the "Software"), to deal in the Software without restriction,
 including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -98,6 +102,8 @@ static IntOption opt_lcm_delay_inc(_cat,
                                    "After first LCM, how many conflicts to see before running the next LCM",
                                    1000,
                                    IntRange(0, INT32_MAX));
+static IntOption
+opt_dup_buffer_size(_cat, "lcm-dup-buffer", "Number of clauses to keep for duplicate check", 16, IntRange(0, INT32_MAX));
 static Int64Option
 opt_vsids_c(_cat, "vsids-c", "conflicts after which we want to switch back to VSIDS (0=off)", 12000000, Int64Range(0, INT64_MAX));
 static Int64Option
@@ -132,6 +138,9 @@ static Int64Option opt_inprocessing_penalty(_cat,
                                             Int64Range(0, INT64_MAX));
 static BoolOption opt_check_sat(_cat, "check-sat", "Store duplicate of formula and check SAT answers", false);
 static IntOption opt_checkProofOnline(_cat, "check-proof", "Check proof during run time", 0, IntRange(0, 10));
+
+static BoolOption
+opt_use_backuped_trail(_cat, "use-backup-trail", "Store trail during backtracking, and use it during propagation", true);
 
 //=================================================================================================
 // Constructor/Destructor:
@@ -181,7 +190,6 @@ Solver::Solver()
   , clause_decay(opt_clause_decay)
   , random_var_freq(opt_random_var_freq)
   , random_seed(opt_random_seed)
-  , VSIDS(false)
   , ccmin_mode(opt_ccmin_mode)
   , phase_saving(opt_phase_saving)
   , rnd_pol(false)
@@ -216,6 +224,8 @@ Solver::Solver()
   , tot_literals(0)
   , chrono_backtrack(0)
   , non_chrono_backtrack(0)
+  , backuped_trail_lits(0)
+  , used_backup_lits(0)
 
   , systematic_branching_state(0)
   , posMissingInSome(opt_almost_pure ? 0 : 1)
@@ -238,11 +248,15 @@ Solver::Solver()
   , watches_bin(WatcherDeleted(ca))
   , watches(WatcherDeleted(ca))
   , qhead(0)
+  , use_backuped_trail(opt_use_backuped_trail)
+  , old_trail_qhead(0)
   , simpDB_assigns(-1)
   , simpDB_props(0)
-  , order_heap_CHB(VarOrderLt(activity_CHB))
+  , current_heuristic(DISTANCE)
   , order_heap_VSIDS(VarOrderLt(activity_VSIDS))
-  , order_heap_distance(VarOrderLt(activity_distance))
+  , order_heap_CHB(VarOrderLt(activity_CHB))
+  , order_heap_DISTANCE(VarOrderLt(activity_distance))
+  , order_heap(&order_heap_DISTANCE)
   , full_heap_size(-1)
   , progress_estimate(0)
   , remove_satisfied(true)
@@ -297,6 +311,8 @@ Solver::Solver()
   , simplified_length_record(0)
   , original_length_record(0)
   , s_propagations(0)
+  , nr_lcm_duplicates(0)
+  , simplifyBuffer(opt_dup_buffer_size)
 
   // simplifyAll adjust occasion
   , curSimplify(1)
@@ -320,7 +336,6 @@ Solver::Solver()
 
   , var_iLevel_inc(1)
   , my_var_decay(0.6)
-  , DISTANCE(true)
 {
     if (opt_checkProofOnline && onlineDratChecker) {
         onlineDratChecker->setVerbosity(opt_checkProofOnline);
@@ -534,6 +549,53 @@ void Solver::simpleAnalyze(CRef confl, vec<Lit> &out_learnt, vec<CRef> &reason_c
     } while (pathC >= 0);
 }
 
+bool Solver::isSimplifyDuplicate(CRef cr)
+{
+    // if there is no buffer, we do not have duplicates
+    if (simplifyBuffer.size() == 0) {
+        return false;
+    }
+    const Clause &c = ca[cr];
+    int checkIndex = 0;
+    // first, check on clause size
+    for (; checkIndex < simplifyBuffer.size(); ++checkIndex) {
+        const CRef bufferCRef = simplifyBuffer[checkIndex];
+        if (bufferCRef == CRef_Undef) continue;
+        if (bufferCRef == cr) continue;
+        const Clause &d = ca[bufferCRef];
+        if (c.size() == d.size()) break;
+    }
+    // no clause in buffer with the same size
+    if (checkIndex == simplifyBuffer.size()) return false;
+
+    // fill seen vector with literals of candidate clause
+    counter++;
+    for (int i = 0; i < c.size(); i++) {
+        Lit l = c[i];
+        seen2[toInt(l)] = counter;
+    }
+    // check for all remaining clauses, whether they hit all literals of c, and no others
+    for (; checkIndex < simplifyBuffer.size(); ++checkIndex) {
+        const CRef bufferCRef = simplifyBuffer[checkIndex];
+        if (bufferCRef == CRef_Undef) continue;
+        if (bufferCRef == cr) continue;
+        const Clause &d = ca[bufferCRef];
+        if (c.size() != d.size()) continue;
+        int hits = 0;
+        for (int i = 0; i < d.size(); ++i) {
+            Lit l = d[i];
+            if (seen2[toInt(l)] == counter)
+                hits++;
+            else
+                break;
+        }
+        if (hits == d.size()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Solver::simplifyLearnt(vec<CRef> &target_learnts, bool is_tier2)
 {
     int ci, cj, li, lj;
@@ -558,6 +620,9 @@ bool Solver::simplifyLearnt(vec<CRef> &target_learnts, bool is_tier2)
             nbSimplified++;
         } else {
             int saved_size = c.size();
+            /* DRUP: in case we want a correct proof, i.e. track all simplifications,
+               we would need to keep track of the original clause here. Let's skip this
+               for efficiency. */
             //         if (drup_file){
             //                 add_oc.clear();
             //                 for (int i = 0; i < c.size(); i++) add_oc.push(c[i]); }
@@ -584,79 +649,99 @@ bool Solver::simplifyLearnt(vec<CRef> &target_learnts, bool is_tier2)
                         }
                     }
                     c.shrink(li - lj);
-                    TRACE(std::cout << "c dropped" << li - lj << " literals from clause " << c << std::endl);
+                    TRACE(std::cout << "c dropped" << li - lj << " literals from clause [" << cr << "]: " << c << std::endl);
                     c.S(0); // this clause might subsume others now
                 }
 
                 assert(c.size() > 1);
                 // simplify a learnt clause c
+                TRACE(std::cout << "c LCM simplify clause[" << cr << "]: " << c << std::endl);
                 simplifyLearnt(c);
 
-                if (saved_size != c.size()) {
-                    shareViaCallback(c); // share via IPASIR?
+                bool recentDuplicate = isSimplifyDuplicate(cr);
 
-                    // print to proof
-                    if (drup_file) {
+                if (!recentDuplicate) {
+
+                    TRACE(std::cout << "c LCM keep (simplified?) clause[" << cr << "]: " << c << std::endl);
+
+                    if (saved_size != c.size()) {
+                        shareViaCallback(c); // share via IPASIR?
+
+                        // print to proof
+                        if (drup_file) {
 #ifdef BIN_DRUP
-                        binDRUP('a', c, drup_file);
-                        //                    binDRUP('d', add_oc, drup_file);
+                            binDRUP('a', c, drup_file);
+                            //                    binDRUP('d', add_oc, drup_file);
 #else
-                        for (int i = 0; i < c.size(); i++)
-                            fprintf(drup_file, "%i ", (var(c[i]) + 1) * (-2 * sign(c[i]) + 1));
-                        fprintf(drup_file, "0\n");
+                            for (int i = 0; i < c.size(); i++)
+                                fprintf(drup_file, "%i ", (var(c[i]) + 1) * (-2 * sign(c[i]) + 1));
+                            fprintf(drup_file, "0\n");
 
-                        //                    fprintf(drup_file, "d ");
-                        //                    for (int i = 0; i < add_oc.size(); i++)
-                        //                        fprintf(drup_file, "%i ", (var(add_oc[i]) + 1) * (-2 * sign(add_oc[i]) + 1));
-                        //                    fprintf(drup_file, "0\n");
+                            //                    fprintf(drup_file, "d ");
+                            //                    for (int i = 0; i < add_oc.size(); i++)
+                            //                        fprintf(drup_file, "%i ", (var(add_oc[i]) + 1) * (-2 * sign(add_oc[i]) + 1));
+                            //                    fprintf(drup_file, "0\n");
 #endif
+                        }
                     }
-                }
 
-                if (c.size() == 0) {
-                    ok = false;
-                    ret = false;
-                    ci++;
-                    while (ci < target_learnts.size()) target_learnts[cj++] = target_learnts[ci++];
-                    goto simplifyLearnt_out;
-                } else if (c.size() == 1) {
-                    // when unit clause occur, enqueue and propagate
-                    uncheckedEnqueue(c[0], 0);
-                    c.mark(1);
-                    if (propagate() != CRef_Undef) {
+                    if (c.size() == 0) {
                         ok = false;
                         ret = false;
                         ci++;
                         while (ci < target_learnts.size()) target_learnts[cj++] = target_learnts[ci++];
                         goto simplifyLearnt_out;
+                    } else if (c.size() == 1) {
+                        // when unit clause occur, enqueue and propagate
+                        uncheckedEnqueue(c[0], 0);
+                        c.mark(1);
+                        if (propagate() != CRef_Undef) {
+                            ok = false;
+                            ret = false;
+                            ci++;
+                            while (ci < target_learnts.size()) target_learnts[cj++] = target_learnts[ci++];
+                            goto simplifyLearnt_out;
+                        }
+                        // delete the clause memory in logic
+                        ca.free(cr);
+                        /* DRUP: in case we want a correct proof, i.e. track all simplifications,
+                        we would need to keep track of the original clause here. Let's skip this
+                        for efficiency. */
+                        //#ifdef BIN_DRUP
+                        //                    binDRUP('d', c, drup_file);
+                        //#else
+                        //                    fprintf(drup_file, "d ");
+                        //                    for (int i = 0; i < c.size(); i++)
+                        //                        fprintf(drup_file, "%i ", (var(c[i]) + 1) * (-2 * sign(c[i]) + 1));
+                        //                    fprintf(drup_file, "0\n");
+                        //#endif
+                    } else {
+                        attachClause(cr);
+                        target_learnts[cj++] = target_learnts[ci];
+                        simplifyBuffer.addNext(cr); /* store in duplicate buffer */
+
+                        nblevels = computeLBD(c);
+                        if (nblevels < c.lbd()) {
+                            c.set_lbd(nblevels);
+                        }
+
+                        // in case we work on the tier2 set, a clause might move to core learnt clauses
+                        if (is_tier2 && c.lbd() <= core_lbd_cut) {
+                            cj--;
+                            learnts_core.push(cr);
+                            c.mark(CORE);
+                        }
+
+                        c.setSimplified(true);
                     }
-                    // delete the clause memory in logic
-                    ca.free(cr);
-                    //#ifdef BIN_DRUP
-                    //                    binDRUP('d', c, drup_file);
-                    //#else
-                    //                    fprintf(drup_file, "d ");
-                    //                    for (int i = 0; i < c.size(); i++)
-                    //                        fprintf(drup_file, "%i ", (var(c[i]) + 1) * (-2 * sign(c[i]) + 1));
-                    //                    fprintf(drup_file, "0\n");
-                    //#endif
+
                 } else {
-                    attachClause(cr);
-                    target_learnts[cj++] = target_learnts[ci];
-
-                    nblevels = computeLBD(c);
-                    if (nblevels < c.lbd()) {
-                        c.set_lbd(nblevels);
-                    }
-
-                    // in case we work on the tier2 set, a clause might move to core learnt clauses
-                    if (is_tier2 && c.lbd() <= core_lbd_cut) {
-                        cj--;
-                        learnts_core.push(cr);
-                        c.mark(CORE);
-                    }
-
-                    c.setSimplified(true);
+                    TRACE(std::cout << "c LCM: drop duplicate simplified clause[" << cr << "]: " << ca[cr] << std::endl);
+                    // this clause is a duplicate now, hence, mark it accordingly
+                    /* DRUP: do not delete this simplified clause from the proof, as we did not add it yet */
+                    removeSatisfiedClause(cr, false);
+                    c.mark(1);
+                    nr_lcm_duplicates++;
                 }
             }
         }
@@ -669,6 +754,8 @@ simplifyLearnt_out:;
 
 bool Solver::simplifyAll()
 {
+    reset_old_trail();
+
     ////
     simplified_length_record = original_length_record = 0;
 
@@ -718,8 +805,10 @@ Var Solver::newVar(bool sign, bool dvar)
     watches.init(mkLit(v, true));
     assigns.push(l_Undef);
     vardata.push(mkVarData(CRef_Undef, 0));
+    oldreasons.push(CRef_Undef);
     activity_CHB.push(0);
     activity_VSIDS.push(rnd_init_act ? drand(random_seed) * 0.00001 : 0);
+    activity_distance.push(0);
 
     picked.push(0);
     conflicted.push(0);
@@ -734,8 +823,8 @@ Var Solver::newVar(bool sign, bool dvar)
     polarity.push(sign);
     decision.push();
     trail.capacity(v + 1);
+    old_trail.capacity(v + 1);
 
-    activity_distance.push(0);
     var_iLevel.push(0);
     var_iLevel_tmp.push(0);
     pathCs.push(0);
@@ -856,31 +945,33 @@ void Solver::detachClause(CRef cr, bool strict)
 }
 
 
-void Solver::removeClause(CRef cr)
+void Solver::removeClause(CRef cr, bool remove_from_proof)
 {
     Clause &c = ca[cr];
     statistics.solveSteps++;
 
     detachClause(cr);
     // Don't leave pointers to free'd memory!
-    if (locked(c)) {
-        Lit implied = c.size() != 2 ? c[0] : (value(c[0]) == l_True ? c[0] : c[1]);
-        vardata[var(implied)].reason = CRef_Undef;
-        if (drup_file && onlineDratChecker && level(var(implied)) == 0) { /* before we drop the reason, store a unit */
-            if (!onlineDratChecker->addClause(mkLit(var(implied), value(var(implied)) == l_False))) exit(134);
+    if (remove_from_proof) {
+        if (locked(c)) {
+            Lit implied = c.size() != 2 ? c[0] : (value(c[0]) == l_True ? c[0] : c[1]);
+            vardata[var(implied)].reason = CRef_Undef;
+            if (drup_file && onlineDratChecker && level(var(implied)) == 0) { /* before we drop the reason, store a unit */
+                if (!onlineDratChecker->addClause(mkLit(var(implied), value(var(implied)) == l_False))) exit(134);
+            }
         }
-    }
-    if (drup_file) {
-        if (c.mark() != 1) {
+        if (drup_file) {
+            if (c.mark() != 1) {
 #ifdef BIN_DRUP
-            binDRUP('d', c, drup_file);
+                binDRUP('d', c, drup_file);
 #else
-            fprintf(drup_file, "d ");
-            for (int i = 0; i < c.size(); i++) fprintf(drup_file, "%i ", (var(c[i]) + 1) * (-2 * sign(c[i]) + 1));
-            fprintf(drup_file, "0\n");
+                fprintf(drup_file, "d ");
+                for (int i = 0; i < c.size(); i++) fprintf(drup_file, "%i ", (var(c[i]) + 1) * (-2 * sign(c[i]) + 1));
+                fprintf(drup_file, "0\n");
 #endif
-        } else if (verbosity >= 1) {
-            printf("c Bug. I don't expect this to happen.\n");
+            } else if (verbosity >= 1) {
+                printf("c Bug. I don't expect this to happen.\n");
+            }
         }
     }
 
@@ -888,7 +979,7 @@ void Solver::removeClause(CRef cr)
     ca.free(cr);
 }
 
-void Solver::removeSatisfiedClause(CRef cr)
+void Solver::removeSatisfiedClause(CRef cr, bool remove_from_proof)
 {
     Clause &c = ca[cr];
 
@@ -905,12 +996,15 @@ void Solver::removeSatisfiedClause(CRef cr)
 #endif
     }
 
-    removeClause(cr);
+    removeClause(cr, remove_from_proof);
 }
 
 
 bool Solver::satisfied(const Clause &c) const
 {
+    if (assumptions.size()) // Check clauses with many selectors is too time consuming
+        return (value(c[0]) == l_True) || (value(c[1]) == l_True);
+
     for (int i = 0; i < c.size(); i++)
         if (value(c[i]) == l_True) return true;
     return false;
@@ -919,45 +1013,57 @@ bool Solver::satisfied(const Clause &c) const
 
 // Revert to the state at given level (keeping all assignment at 'level' but not beyond).
 //
-void Solver::cancelUntil(int bLevel)
+void Solver::cancelUntil(int bLevel, bool allow_trail_saving)
 {
 
     if (decisionLevel() > bLevel) {
 #ifdef PRINT_OUT
         std::cout << "bt " << bLevel << "\n";
 #endif
+
+        reset_old_trail();
+
+        bool savetrail = allow_trail_saving && use_backuped_trail && (decisionLevel() - bLevel > 1);
+
         add_tmp.clear();
         for (int c = trail.size() - 1; c >= trail_lim[bLevel]; c--) {
             Var x = var(trail[c]);
 
             if (level(x) <= bLevel) {
                 add_tmp.push(trail[c]);
-            } else {
-                if (!VSIDS) {
-                    uint32_t age = conflicts - picked[x];
-                    if (age > 0) {
-                        double adjusted_reward = ((double)(conflicted[x] + almost_conflicted[x])) / ((double)age);
-                        double old_activity = activity_CHB[x];
-                        activity_CHB[x] = step_size * adjusted_reward + ((1 - step_size) * old_activity);
-                        if (order_heap_CHB.inHeap(x)) {
-                            if (activity_CHB[x] > old_activity)
-                                order_heap_CHB.decrease(x);
-                            else
-                                order_heap_CHB.increase(x);
-                        }
-                    }
-#ifdef ANTI_EXPLORATION
-                    canceled[x] = conflicts;
-#endif
-                }
-
-                assigns[x] = l_Undef;
-#ifdef PRINT_OUT
-                std::cout << "undo " << x << "\n";
-#endif
-                if (phase_saving > 1 || ((phase_saving == 1) && c > trail_lim.last())) polarity[x] = sign(trail[c]);
-                insertVarOrder(x);
+                continue;
             }
+
+            if (savetrail) {
+                old_trail.push_(trail[c]); /* we traverse trail in reverse order */
+                oldreasons[x] = reason(x);
+            }
+
+            if (!usesVSIDS()) {
+                uint32_t age = conflicts - picked[x];
+                if (age > 0) {
+                    double adjusted_reward = ((double)(conflicted[x] + almost_conflicted[x])) / ((double)age);
+                    double old_activity = activity_CHB[x];
+                    activity_CHB[x] = step_size * adjusted_reward + ((1 - step_size) * old_activity);
+                    if (usesCHB() && order_heap->inHeap(x)) {
+                        if (activity_CHB[x] > old_activity)
+                            order_heap->decrease(x);
+                        else
+                            order_heap->increase(x);
+                    }
+                }
+            }
+
+#ifdef ANTI_EXPLORATION
+            canceled[x] = conflicts;
+#endif
+
+            assigns[x] = l_Undef;
+#ifdef PRINT_OUT
+            std::cout << "undo " << x << "\n";
+#endif
+            if (phase_saving > 1 || ((phase_saving == 1) && c > trail_lim.last())) polarity[x] = sign(trail[c]);
+            insertVarOrder(x);
         }
         qhead = trail_lim[bLevel];
         trail.shrink(trail.size() - trail_lim[bLevel]);
@@ -967,6 +1073,17 @@ void Solver::cancelUntil(int bLevel)
         }
 
         add_tmp.clear();
+
+        /* reverse saved trail, as we added elements in reverse order as well */
+        if (savetrail) {
+            int i = 0, j = old_trail.size() - 1;
+            while (i < j) {
+                const Lit l = old_trail[i];
+                old_trail[i++] = old_trail[j];
+                old_trail[j--] = l;
+            }
+            backuped_trail_lits += old_trail.size();
+        }
     }
 }
 
@@ -978,8 +1095,6 @@ void Solver::cancelUntil(int bLevel)
 Lit Solver::pickBranchLit()
 {
     Var next = var_Undef;
-    //    Heap<VarOrderLt>& order_heap = VSIDS ? order_heap_VSIDS : order_heap_CHB;
-    Heap<VarOrderLt> &order_heap = VSIDS ? order_heap_VSIDS : (DISTANCE ? order_heap_distance : order_heap_CHB);
 
     // Random decision:
     /*if (drand(random_seed) < random_var_freq && !order_heap.empty()){
@@ -989,24 +1104,24 @@ Lit Solver::pickBranchLit()
 
     // Activity based decision:
     while (next == var_Undef || value(next) != l_Undef || !decision[next])
-        if (order_heap.empty())
+        if (order_heap->empty())
             return lit_Undef;
         else {
 #ifdef ANTI_EXPLORATION
-            if (!VSIDS) {
-                Var v = order_heap_CHB[0];
+            if (usesCHB()) {
+                Var v = (*order_heap)[0];
                 uint32_t age = conflicts - canceled[v];
                 while (age > 0) {
                     double decay = pow(0.95, age);
                     activity_CHB[v] *= decay;
-                    if (order_heap_CHB.inHeap(v)) order_heap_CHB.increase(v);
+                    if (order_heap->inHeap(v)) order_heap->increase(v);
                     canceled[v] = conflicts;
-                    v = order_heap_CHB[0];
+                    v = (*order_heap)[0];
                     age = conflicts - canceled[v];
                 }
             }
 #endif
-            next = order_heap.removeMin();
+            next = order_heap->removeMin();
         }
 
     // in case we found (almost) pure literals, disable phase-saving
@@ -1123,7 +1238,7 @@ void Solver::analyze(CRef confl, vec<Lit> &out_learnt, int &out_btlevel, int &ou
             Lit q = c[j];
 
             if (!seen[var(q)] && level(var(q)) > 0) {
-                if (VSIDS) {
+                if (usesVSIDS()) {
                     varBumpActivity(var(q), .5);
                     add_tmp.push(q);
                 } else
@@ -1207,7 +1322,7 @@ void Solver::analyze(CRef confl, vec<Lit> &out_learnt, int &out_btlevel, int &ou
         out_btlevel = level(var(p));
     }
 
-    if (VSIDS) {
+    if (usesVSIDS()) {
         for (int i = 0; i < add_tmp.size(); i++) {
             Var v = var(add_tmp[i]);
             if (level(v) >= out_btlevel - 1) varBumpActivity(v, 1);
@@ -1389,8 +1504,10 @@ void Solver::analyzeFinal(const CRef cr, vec<Lit> &out_conflict)
 void Solver::uncheckedEnqueue(Lit p, int level, CRef from)
 {
     assert(value(p) == l_Undef);
+    assert(level <= decisionLevel() && "do not enqueue literals on non-existing levels");
+    assert((from == CRef_Undef || from < ca.size()) && "do not use reasons that are not located in the allocator");
     Var x = var(p);
-    if (!VSIDS) {
+    if (!usesVSIDS()) {
         picked[x] = conflicts;
         conflicted[x] = 0;
         almost_conflicted[x] = 0;
@@ -1399,7 +1516,7 @@ void Solver::uncheckedEnqueue(Lit p, int level, CRef from)
         if (age > 0) {
             double decay = pow(0.95, age);
             activity_CHB[var(p)] *= decay;
-            if (order_heap_CHB.inHeap(var(p))) order_heap_CHB.increase(var(p));
+            if (usesCHB() && order_heap->inHeap(var(p))) order_heap->increase(var(p));
         }
 #endif
     }
@@ -1427,6 +1544,8 @@ CRef Solver::propagate()
     CRef confl = CRef_Undef;
     int num_props = 0;
     lazySATwatch.clear();
+    Lit old_trail_top = lit_Undef;
+    CRef old_reason = CRef_Undef;
     watches.cleanAll();
     watches_bin.cleanAll();
 
@@ -1436,6 +1555,39 @@ CRef Solver::propagate()
         vec<Watcher> &ws = watches[p];
         Watcher *i, *j, *end;
         num_props++;
+
+        /* begin old trail reconstruction */
+        if (use_backuped_trail) {
+            if (old_trail_qhead < old_trail.size()) {
+                old_trail_top = old_trail[old_trail_qhead];
+                old_reason = oldreasons[var(old_trail_top)];
+            }
+            if (p == old_trail_top) {
+                while (old_trail_qhead < old_trail.size() - 1) {
+                    old_trail_qhead++;
+                    old_trail_top = old_trail[old_trail_qhead];
+                    old_reason = oldreasons[var(old_trail_top)];
+                    if (old_reason == CRef_Undef) {
+                        break;
+                    } else if (value(old_trail_top) == l_False) {
+                        confl = old_reason;
+                        used_backup_lits++;
+                        TRACE(std::cout
+                              << "c prop: hit conflict during trail restoring, when trying to propagate literal "
+                              << old_trail_top << " with reason[" << old_reason << "] " << ca[old_reason] << std::endl;);
+                        goto propagation_out;
+                    } else if (value(old_trail_top) == l_Undef) {
+                        used_backup_lits++;
+                        TRACE(std::cout << "c prop: enqueue literal " << old_trail_top << " with reason[" << old_reason
+                                        << "] " << ca[old_reason] << std::endl;);
+                        uncheckedEnqueue(old_trail_top, decisionLevel(), old_reason);
+                    }
+                }
+            } else if (var(p) == var(old_trail_top) || value(old_trail_top) == l_False) {
+                reset_old_trail();
+            }
+        }
+        /* end old trail reconstruction */
 
         vec<Watcher> &ws_bin = watches_bin[p]; // Propagate binary clauses first.
         for (int k = 0; k < ws_bin.size(); k++) {
@@ -1477,17 +1629,26 @@ CRef Solver::propagate()
             }
 
             // Look for new watch:
-            for (int k = 2; k < c.size(); k++)
+            int watchPos = 0, avoidLevel = assumptions.size();
+            for (int k = 2; k < c.size(); k++) {
                 if (value(c[k]) != l_False) {
-                    c[1] = c[k];
-                    c[k] = false_lit;
-                    if (value(c[1]) == l_True) {
-                        lazySATwatch.push(watchItem(w, ~c[1]));
-                    } else {
-                        watches[~c[1]].push(w);
-                    }
-                    goto NextClause;
+                    watchPos = k; /* memorize that we found one literal we can watch */
+                    if (level(var(c[k])) > avoidLevel) break;
                 }
+            }
+
+            /* found a position to watch, watch the clause */
+            if (watchPos != 0) {
+                c[1] = c[watchPos];
+                c[watchPos] = false_lit;
+                if (value(c[1]) == l_True) {
+                    lazySATwatch.push(watchItem(w, ~c[1]));
+                } else {
+                    watches[~c[1]].push(w);
+                }
+
+                goto NextClause;
+            }
 
             // Did not find watch -- clause is unit under assignment:
             *j++ = w;
@@ -1568,6 +1729,7 @@ void Solver::reduceDB()
     TRACE(std::cout << "c run reduceDB on level " << decisionLevel() << std::endl);
     // if (local_learnts_dirty) cleanLearnts(learnts_local, LOCAL);
     // local_learnts_dirty = false;
+    reset_old_trail();
 
     sort(learnts_local, reduceDB_lt(ca));
 
@@ -1592,6 +1754,7 @@ void Solver::reduceDB()
 void Solver::reduceDB_Tier2()
 {
     TRACE(std::cout << "c run reduceDB_tier2 on level " << decisionLevel() << std::endl);
+    reset_old_trail();
     int i, j;
     for (i = j = 0; i < learnts_tier2.size(); i++) {
         Clause &c = ca[learnts_tier2[i]];
@@ -1625,8 +1788,7 @@ int Solver::getRestartLevel()
         Var next = var_Undef;
         int restartLevel = 0;
 
-        Heap<VarOrderLt> &restart_heap = DISTANCE ? order_heap_distance : ((!VSIDS) ? order_heap_CHB : order_heap_VSIDS);
-        const vec<double> &restart_activity = DISTANCE ? activity_distance : ((!VSIDS) ? activity_CHB : activity_VSIDS);
+        const vec<double> &restart_activity = usesVSIDS() ? activity_VSIDS : (usesCHB() ? activity_CHB : activity_distance);
 
         do {
             repeatReusedTrail = false; // get it right this time?
@@ -1634,11 +1796,11 @@ int Solver::getRestartLevel()
             // Activity based selection
             while (next == var_Undef || value(next) != l_Undef ||
                    !decision[next]) // found a yet unassigned variable with the highest activity among the unassigned variables
-                if (restart_heap.empty()) {
+                if (order_heap->empty()) {
                     // we cannot compare to any other variable, hence, we have SAT already
                     return 0;
                 } else {
-                    next = restart_heap.removeMin(); // get next element
+                    next = order_heap->removeMin(); // get next element
                 }
 
             // based on variable next, either check for reusedTrail, or matching Trail!
@@ -1651,18 +1813,18 @@ int Solver::getRestartLevel()
                 }
             }
             // put the decision literal back, so that it can be used for the next decision
-            restart_heap.insert(next);
+            order_heap->insert(next);
 
             // reused trail
             if (restart.selection_type > 1 && restartLevel > 0) { // check whether jumping higher would be "more correct"
                 cancelUntil(restartLevel);
                 Var more = var_Undef;
                 while (more == var_Undef || value(more) != l_Undef || !decision[more])
-                    if (restart_heap.empty()) {
+                    if (order_heap->empty()) {
                         more = var_Undef;
                         break;
                     } else {
-                        more = restart_heap.removeMin();
+                        more = order_heap->removeMin();
                     }
 
                 // actually, would have to jump higher than the current level!
@@ -1670,7 +1832,7 @@ int Solver::getRestartLevel()
                     repeatReusedTrail = true;
                     next = more; // no need to insert, and get back afterwards again!
                 } else {
-                    restart_heap.insert(more);
+                    order_heap->insert(more);
                 }
             }
         } while (repeatReusedTrail);
@@ -1722,17 +1884,21 @@ void Solver::safeRemoveSatisfied(vec<CRef> &cs, unsigned valid_mark)
 
 void Solver::rebuildOrderHeap()
 {
-    vec<Var> vs;
+    /* all unassigned variables present, no need to rebuild */
+    if (decisionLevel() == 0 && (order_heap->size() + trail.size() >= nVars())) {
+        TRACE(for (Var v = 0; v < nVars(); v++) {
+            assert((!decision[v] || value(v) != l_Undef || order_heap->inHeap(v)) &&
+                   "unassigned variables have to be present in the heap");
+        });
+        return;
+    }
+
+    decision_rebuild_vars.clear();
     for (Var v = 0; v < nVars(); v++)
-        if (decision[v] && value(v) == l_Undef) vs.push(v);
+        if (decision[v] && value(v) == l_Undef) decision_rebuild_vars.push(v);
 
-    order_heap_CHB.build(vs);
-    order_heap_VSIDS.build(vs);
-    order_heap_distance.build(vs);
-
-    assert(order_heap_VSIDS.size() == order_heap_CHB.size());
-    assert(order_heap_VSIDS.size() == order_heap_distance.size());
-    full_heap_size = order_heap_VSIDS.size();
+    order_heap->build(decision_rebuild_vars);
+    full_heap_size = order_heap->size();
 }
 
 
@@ -1748,6 +1914,8 @@ bool Solver::simplify()
 {
     TRACE(std::cout << "c run simplify on level " << decisionLevel() << std::endl);
     assert(decisionLevel() == 0);
+
+    reset_old_trail();
 
     if (!ok || propagate() != CRef_Undef) return ok = false;
 
@@ -1838,11 +2006,12 @@ bool Solver::collectFirstUIP(CRef confl)
             involved_lits.push(p);
         }
     }
+
+    /* TODO: check whether we can skip this once we do not use DISTANCE decision heuristic anymore */
     double inc = var_iLevel_inc;
-    vec<int> level_incs;
-    level_incs.clear();
+    distance_level_incs.clear();
     for (int i = 0; i < max_level; i++) {
-        level_incs.push(inc);
+        distance_level_incs.push(inc);
         inc = inc / my_var_decay;
     }
 
@@ -1850,18 +2019,18 @@ bool Solver::collectFirstUIP(CRef confl)
         Var v = var(involved_lits[i]);
         //        double old_act=activity_distance[v];
         //        activity_distance[v] +=var_iLevel_inc * var_iLevel_tmp[v];
-        activity_distance[v] += var_iLevel_tmp[v] * level_incs[var_iLevel_tmp[v] - 1];
+        activity_distance[v] += var_iLevel_tmp[v] * distance_level_incs[var_iLevel_tmp[v] - 1];
 
         if (activity_distance[v] > 1e100) {
             for (int vv = 0; vv < nVars(); vv++) activity_distance[vv] *= 1e-100;
             var_iLevel_inc *= 1e-100;
-            for (int j = 0; j < max_level; j++) level_incs[j] *= 1e-100;
+            for (int j = 0; j < max_level; j++) distance_level_incs[j] *= 1e-100;
         }
-        if (order_heap_distance.inHeap(v)) order_heap_distance.decrease(v);
-
-        //        var_iLevel_inc *= (1 / my_var_decay);
+        if (usesDISTANCE()) {
+            if (order_heap->inHeap(v)) order_heap->decrease(v); /* TODO: increase? */
+        }
     }
-    var_iLevel_inc = level_incs[level_incs.size() - 1];
+    var_iLevel_inc = distance_level_incs[distance_level_incs.size() - 1];
     return true;
 }
 
@@ -2123,8 +2292,7 @@ lbool Solver::search(int &nof_conflicts)
     starts++;
 
     // make sure that all unassigned variables are in the heap
-    assert(trail.size() + (VSIDS ? order_heap_VSIDS.size() : (DISTANCE ? order_heap_distance.size() : order_heap_CHB.size())) >=
-           full_heap_size);
+    assert(trail.size() + order_heap->size() >= full_heap_size);
 
     // simplify
     //
@@ -2157,7 +2325,7 @@ lbool Solver::search(int &nof_conflicts)
             prev_confl = this_confl;
             this_confl = confl;
             // CONFLICT
-            if (VSIDS) {
+            if (usesVSIDS()) {
                 if (--timer == 0 && var_decay < 0.95) timer = 5000, var_decay += 0.01;
             } else if (step_size > min_step_size)
                 step_size -= step_size_dec;
@@ -2177,23 +2345,23 @@ lbool Solver::search(int &nof_conflicts)
                           Lit tl = ca[confl][i];
                           std::cout << "c     " << tl << "@" << level(var(tl)) << " with reason " << reason(var(tl)) << std::endl;
                       })
-                cancelUntil(btLevel);
+                cancelUntil(btLevel, false);
                 continue;
             }
 
             learnt_clause.clear();
             if (conflicts > 50000) {
-                if (DISTANCE != 0) {
+                if (considersDISTANCE()) {
                     if (verbosity) printf("c set DISTANCE to 0\n");
-                    DISTANCE = 0;
+                    disableDISTANCEheuristic();
                 }
             } else {
-                if (DISTANCE != 1) {
+                if (!considersDISTANCE()) {
                     if (verbosity) printf("c set DISTANCE to 1\n");
-                    DISTANCE = 1;
+                    enableDISTANCEheuristic();
                 }
             }
-            if (VSIDS && DISTANCE) collectFirstUIP(confl);
+            if (current_heuristic == VSIDS_DISTANCE) collectFirstUIP(confl);
 
             TRACE(std::cout << "c run conflict analysis on conflict clause [" << confl << "]: " << ca[confl] << std::endl);
             analyze(confl, learnt_clause, backtrack_level, lbd);
@@ -2209,7 +2377,7 @@ lbool Solver::search(int &nof_conflicts)
                 TRACE(std::cout << "c chronological backtracking until level " << data.nHighestLevel - 1 << std::endl);
                 assert((level(var(learnt_clause[0])) == 0 || level(var(learnt_clause[0])) > data.nHighestLevel - 1) &&
                        "learnt clause is asserting");
-                cancelUntil(data.nHighestLevel - 1);
+                cancelUntil(data.nHighestLevel - 1, false);
             } else // default behavior
             {
                 ++non_chrono_backtrack;
@@ -2218,7 +2386,7 @@ lbool Solver::search(int &nof_conflicts)
             }
 
             lbd--;
-            if (VSIDS) {
+            if (usesVSIDS()) {
                 cached = false;
                 conflicts_VSIDS++;
                 lbd_queue.push(lbd);
@@ -2261,7 +2429,7 @@ lbool Solver::search(int &nof_conflicts)
 #endif
             }
 
-            if (VSIDS) varDecayActivity();
+            if (usesVSIDS()) varDecayActivity();
             claDecayActivity();
 
             /*if (--learntsize_adjust_cnt == 0){
@@ -2279,7 +2447,7 @@ lbool Solver::search(int &nof_conflicts)
         } else {
             // NO CONFLICT
             bool restart = false;
-            if (!VSIDS)
+            if (!usesVSIDS())
                 restart = nof_conflicts <= 0;
             else if (!cached) {
                 restart = lbd_queue.full() && (lbd_queue.avg() * 0.8 > global_lbd_sum / conflicts_VSIDS);
@@ -2403,15 +2571,69 @@ static double luby(double y, int x)
 void Solver::toggle_decision_heuristic(bool to_VSIDS)
 {
     if (to_VSIDS) { // initialize VSIDS heap again?
-        order_heap_VSIDS.build(DISTANCE ? order_heap_distance.elements() : order_heap_CHB.elements());
-        assert((trail.size() + order_heap_VSIDS.size()) >= full_heap_size);
+        assert(!usesVSIDS() && "should not from VSIDS to itself");
+        Heap<VarOrderLt> &currentHeap = usesDISTANCE() ? order_heap_DISTANCE : order_heap_CHB;
+        order_heap_VSIDS.growTo(currentHeap);
+        order_heap_VSIDS.build(currentHeap.elements());
+        order_heap = &order_heap_VSIDS;
+        current_heuristic = current_heuristic == CHB ? VSIDS_CHB : VSIDS_DISTANCE;
     } else {
-        order_heap_distance.build(order_heap_VSIDS.elements());
-        order_heap_CHB.build(order_heap_VSIDS.elements());
-        assert((trail.size() + order_heap_distance.size()) >= full_heap_size);
-        assert((trail.size() + order_heap_CHB.size()) >= full_heap_size);
+        assert(usesVSIDS() && "should come from VSIDS");
+        if (current_heuristic == VSIDS_CHB) {
+            order_heap_CHB.growTo(order_heap_VSIDS);
+            order_heap_CHB.build(order_heap_VSIDS.elements());
+            order_heap = &order_heap_CHB;
+            current_heuristic = CHB;
+        } else {
+            order_heap_CHB.growTo(order_heap_VSIDS);
+            order_heap_DISTANCE.build(order_heap_VSIDS.elements());
+            order_heap = &order_heap_DISTANCE;
+            current_heuristic = DISTANCE;
+        }
     }
+    assert((trail.size() + order_heap->size()) >= full_heap_size);
 }
+
+void Solver::disableDISTANCEheuristic()
+{
+    switch (current_heuristic) {
+    case VSIDS_DISTANCE:
+        /* currently VSIDS, just change swap partner */
+        current_heuristic = VSIDS_CHB;
+        break;
+    case DISTANCE:
+        current_heuristic = CHB;
+        order_heap_CHB.growTo(order_heap_DISTANCE);
+        order_heap_CHB.build(order_heap_DISTANCE.elements());
+        order_heap = &order_heap_CHB;
+        break;
+    default:
+        break;
+    }
+    assert(!considersDISTANCE() && "we should have disabled DISTANCE heuristic");
+    assert((trail.size() + order_heap->size()) >= full_heap_size);
+}
+
+void Solver::enableDISTANCEheuristic()
+{
+    switch (current_heuristic) {
+    case VSIDS_CHB:
+        /* currently VSIDS, just change swap partner */
+        current_heuristic = VSIDS_DISTANCE;
+        break;
+    case CHB:
+        current_heuristic = DISTANCE;
+        order_heap_DISTANCE.growTo(order_heap_CHB);
+        order_heap_DISTANCE.build(order_heap_CHB.elements());
+        order_heap = &order_heap_DISTANCE;
+        break;
+    default:
+        break;
+    }
+    assert(considersDISTANCE() && "we should have enabled DISTANCE heuristic");
+    assert((trail.size() + order_heap->size()) >= full_heap_size);
+}
+
 
 // NOTE: assumptions passed in member-variable 'assumptions'.
 lbool Solver::solve_()
@@ -2420,6 +2642,7 @@ lbool Solver::solve_()
     conflict.clear();
     if (!ok) return l_False;
 
+    reset_old_trail();
     solves++;
     TRACE(std::cout << "c start " << solves << " solve call with " << clauses.size() << " clauses and " << nVars()
                     << " variables" << std::endl);
@@ -2442,11 +2665,9 @@ lbool Solver::solve_()
     add_tmp.clear();
 
     // toggle back to VSIDS
-    if (!VSIDS) toggle_decision_heuristic(true);
-    VSIDS = true;
+    if (!usesVSIDS()) toggle_decision_heuristic(true);
     int init = VSIDS_props_init_limit;
     while (status == l_Undef && init > 0 && withinBudget()) status = search(init);
-    VSIDS = false;
     // do not use VSIDS now
     toggle_decision_heuristic(false);
 
@@ -2459,7 +2680,7 @@ lbool Solver::solve_()
             switch_mode = true;
             VSIDS_props_limit = VSIDS_props_limit + VSIDS_props_limit / 10;
         }
-        if (VSIDS) {
+        if (usesVSIDS()) {
             int weighted = INT32_MAX;
             status = search(weighted);
         } else {
@@ -2471,10 +2692,9 @@ lbool Solver::solve_()
         // toggle VSIDS?
         if (switch_mode) {
             switch_mode = false;
-            VSIDS = !VSIDS;
-            toggle_decision_heuristic(VSIDS); // switch to VSIDS
+            toggle_decision_heuristic(!usesVSIDS()); // switch to VSIDS
             if (verbosity >= 1) {
-                if (VSIDS) {
+                if (usesVSIDS()) {
                     printf("c Switched to VSIDS.\n");
                 } else {
                     printf("c Switched to LRB/DISTANCE.\n");
@@ -2714,7 +2934,7 @@ bool Solver::inprocessing()
 
         /* in case we found unit clauses, make sure we find them fast */
         if (add_tmp.size()) {
-            cancelUntil(0);
+            cancelUntil(0, false);
             for (int i = 0; i < add_tmp.size(); ++i) {
                 if (value(add_tmp[i]) == l_False) { /* we found a contradicting unit clause */
                     ok = false;
@@ -2762,6 +2982,12 @@ void Solver::relocAll(ClauseAllocator &to)
             ca.reloc(vardata[v].reason, to);
     }
 
+    for (int i = 0; i < old_trail.size(); i++) {
+        Var v = var(old_trail[i]);
+
+        if (oldreasons[v] != CRef_Undef && (ca[oldreasons[v]].reloced())) ca.reloc(oldreasons[v], to);
+    }
+
     // All learnt:
     //
     for (int i = 0; i < learnts_core.size(); i++) ca.reloc(learnts_core[i], to);
@@ -2777,6 +3003,10 @@ void Solver::relocAll(ClauseAllocator &to)
             clauses[j++] = clauses[i];
         }
     clauses.shrink(i - j);
+
+    for (int i = 0; i < simplifyBuffer.size(); i++) {
+        if (simplifyBuffer[i] != CRef_Undef) ca.reloc(simplifyBuffer[i], to);
+    }
 }
 
 
@@ -2791,4 +3021,14 @@ void Solver::garbageCollect()
         printf("c |  Garbage collection:   %12d bytes => %12d bytes             |\n",
                ca.size() * ClauseAllocator::Unit_Size, to.size() * ClauseAllocator::Unit_Size);
     to.moveTo(ca);
+}
+
+
+void Solver::reset_old_trail()
+{
+    for (int i = 0; i < old_trail.size(); i++) {
+        oldreasons[var(old_trail[i])] = CRef_Undef;
+    }
+    old_trail.clear();
+    old_trail_qhead = 0;
 }

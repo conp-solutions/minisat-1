@@ -66,13 +66,15 @@ void printStats(Solver &solver)
            solver.starts, solver.restart.partialRestarts, solver.restart.savedDecisions, solver.restart.savedPropagations,
            ((double)solver.restart.savedPropagations * 100.0) / (double)solver.propagations);
     printf("c polarity              : %d pos, %d neg\n", solver.posMissingInSome, solver.negMissingInSome);
-    printf("c LCM                   : %lu runs, %lu Ctried, %lu Cshrinked, %lu Ldeleted, %lu Lrev-deleted\n", solver.nbSimplifyAll,
-           solver.LCM_total_tries, solver.LCM_successful_tries, solver.LCM_dropped_lits, solver.LCM_dropped_reverse);
+    printf("c LCM                   : %lu runs, %lu Ctried, %lu Cshrinked (%lu known duplicates), %lu Ldeleted, %lu "
+           "Lrev-deleted\n",
+           solver.nbSimplifyAll, solver.LCM_total_tries, solver.LCM_successful_tries, solver.nr_lcm_duplicates,
+           solver.LCM_dropped_lits, solver.LCM_dropped_reverse);
     printf("c Inprocessing          : %lu subsumed, %lu dropped lits\n", solver.inprocessing_C, solver.inprocessing_L);
     printf("c Stats:                : %lf solve, %lu steps, %lf simp, %lu steps, %d var, budget: %d\n",
            solver.statistics.solveSeconds, solver.statistics.solveSteps, solver.statistics.simpSeconds,
            solver.statistics.simpSteps, solver.nVars(), solver.withinBudget());
-
+    printf("c backup trail: stored: %lu used successfully: %lu\n", solver.backuped_trail_lits, solver.used_backup_lits);
     if (mem_used != 0) printf("c Memory used           : %.2f MB\n", mem_used);
     printf("c CPU time              : %g s\n", cpu_time);
 }
@@ -127,7 +129,7 @@ int main(int argc, char **argv)
 #endif
         // Extra options:
         //
-        IntOption verb("MAIN", "verb", "Verbosity level (0=silent, 1=some, 2=more).", 1, IntRange(0, 3));
+        IntOption verb("MAIN", "verb", "Verbosity level (0=silent, 1=some, 2=more).", 1, IntRange(0, 4));
         BoolOption pre("MAIN", "pre", "Completely turn on/off any preprocessing.", true);
         BoolOption s_model("MAIN", "model", "Do report a model if the formula is satisfiable.", true);
         StringOption dimacs("MAIN", "dimacs", "If given, stop after preprocessing and write the result to this file.");
