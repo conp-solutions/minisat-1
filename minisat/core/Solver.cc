@@ -147,6 +147,12 @@ static IntOption opt_core_size_lim(_cat,
                                    "Start reducing core learnts, if we collected more than the given number",
                                    50000,
                                    IntRange(-1, INT32_MAX));
+static DoubleOption opt_core_size_lim_inc(_cat,
+                                          "core-size-lim-inc",
+                                          "Percent to increase cycles between core clause reductions",
+                                          1.1,
+                                          DoubleRange(1, true, HUGE_VAL, false));
+
 
 //=================================================================================================
 // Constructor/Destructor:
@@ -266,6 +272,7 @@ Solver::Solver()
 
   , core_lbd_cut(3)
   , core_size_lim(opt_core_size_lim)
+  , core_size_lim_inc(opt_core_size_lim_inc)
   , global_lbd_sum(0)
   , lbd_queue(50)
   , next_T2_reduce(10000)
@@ -1583,8 +1590,8 @@ struct reduceDB_c {
     reduceDB_c(ClauseAllocator &ca_) : ca(ca_) {}
     bool operator()(CRef x, CRef y) const
     {
-        return (ca[x].lbd() != ca[y].lbd()) && (ca[x].lbd() > ca[y].lbd()) ||
-               (ca[x].lbd() == ca[y].lbd()) && (ca[x].size() > ca[y].size());
+        return ((ca[x].lbd() != ca[y].lbd()) && (ca[x].lbd() > ca[y].lbd())) ||
+               ((ca[x].lbd() == ca[y].lbd()) && (ca[x].size() > ca[y].size()));
     }
 };
 
@@ -1597,7 +1604,7 @@ void Solver::reduceDB_Core()
 
     for (i = j = 0; i < learnts_core.size(); i++) {
         Clause &c = ca[learnts_core[i]];
-        if (c.mark() == CORE)
+        if (c.mark() == CORE) {
             if (c.lbd() > 2 && !locked(c) && (c.touched() + 100000 < conflicts) && i < limit) {
                 learnts_tier2.push(learnts_core[i]);
                 c.mark(TIER2);
@@ -1611,6 +1618,7 @@ void Solver::reduceDB_Core()
                     limit++;
                 }
             }
+        }
     }
     learnts_core.shrink(i - j);
     if (verbosity > 0) printf("c Core size after reduce: %i\n", learnts_core.size());
@@ -1653,7 +1661,7 @@ void Solver::reduceDB_Tier2()
 
     for (i = j = 0; i < learnts_tier2.size(); i++) {
         Clause &c = ca[learnts_tier2[i]];
-        if (c.mark() == TIER2)
+        if (c.mark() == TIER2) {
             if (!locked(c) && i < limit) {
                 learnts_local.push(learnts_tier2[i]);
                 c.mark(LOCAL);
@@ -1667,6 +1675,7 @@ void Solver::reduceDB_Tier2()
                     limit++;
                 }
             }
+        }
     }
     learnts_tier2.shrink(i - j);
     statistics.solveSteps += learnts_tier2.size();
@@ -2369,7 +2378,7 @@ lbool Solver::search(int &nof_conflicts)
             if (core_size_lim != -1 && learnts_core.size() > core_size_lim) {
                 TRACE(std::cout << "c reduce core learnt clauses" << std::endl);
                 reduceDB_Core();
-                core_size_lim += core_size_lim / 10;
+                core_size_lim += core_size_lim * core_size_lim_inc;
             }
 
             if (learnts_tier2.size() > 7000) {
