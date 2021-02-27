@@ -2942,9 +2942,9 @@ lbool Solver::solve_()
             toggle_decision_heuristic(!usesVSIDS()); // switch to VSIDS
             if (verbosity >= 1) {
                 if (usesVSIDS()) {
-                    if (verbosity > 0) printf("c Switched to VSIDS.\n");
+                    if (verbosity > 1) printf("c Switched to VSIDS.\n");
                 } else {
-                    if (verbosity > 0) printf("c Switched to LRB/DISTANCE.\n");
+                    if (verbosity > 1) printf("c Switched to LRB/DISTANCE.\n");
                 }
             }
         }
