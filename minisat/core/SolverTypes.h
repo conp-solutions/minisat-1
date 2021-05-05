@@ -192,7 +192,7 @@ class Clause
         float act;
         uint32_t abs;
         uint32_t touched;
-        CRef rel;
+        uint32_t rel;
     } data[0];
 
     friend class ClauseAllocator;
@@ -266,11 +266,14 @@ class Clause
     }
 
     bool reloced() const { return header.reloced; }
-    CRef relocation() const { return data[0].rel; }
+    CRef relocation() const {  assert(size() > 1); return ((uint64_t)data[0].rel << 32) + data[1].rel; }
     void relocate(CRef c)
     {
+        assert(size() > 1 && "do not relocate non-unit clauses");
+        assert(header.reloced == 0 && "do not relocate multiple times");
         header.reloced = 1;
-        data[0].rel = c;
+        data[0].rel = (uint32_t)(c >> 32);
+        data[1].rel = (uint32_t)(c & (UINT32_MAX));
     }
 
     /// remove the literal at the given position
