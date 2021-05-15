@@ -38,11 +38,15 @@ class ParSolver : protected SimpSolver
 
     /* structure, that holds relevant data for parallel solving */
     struct SolverData {
-        ParSolver *_parent;
-        int _threadnr;
-        lbool _status;
-        SolverData(ParSolver *parent, int threadnr) : _parent(parent), _threadnr(threadnr), _status(l_Undef) {}
-        SolverData() : _parent(nullptr), _threadnr(0), _status(l_Undef) {}
+        ParSolver *_parent; // pointer to the coordinating ParSolver object
+        int _threadnr;      // number of the solver among all solvers
+        lbool _status;      // status of the associated SAT solver
+        double _idle_s;     // seconds this thread idled while waiting
+
+        SolverData(ParSolver *parent, int threadnr) : _parent(parent), _threadnr(threadnr), _status(l_Undef), _idle_s(0)
+        {
+        }
+        SolverData() : _parent(nullptr), _threadnr(0), _status(l_Undef), _idle_s(0) {}
     };
 
     public:
@@ -115,6 +119,8 @@ class ParSolver : protected SimpSolver
     void init_solvers();
     void tear_down_solvers();
     bool sequential() const { return cores == 1; }
+    void solver_start_idling(size_t threadnr);
+    void solver_stop_idling(size_t threadnr);
 
     // Extra stats
     double simplification_seconds; // seconds of sequential core spend during simplification
