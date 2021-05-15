@@ -348,10 +348,10 @@ void ParSolver::thread_run_solve(size_t threadnr)
 {
     std::cout << "c started thread " << threadnr << std::endl;
 
-    assert(solvers == solverData.size() && "number of solvers and data should match");
+    assert(solvers.size() == solverData.size() && "number of solvers and data should match");
     assert(threadnr < solverData.size() && "cannot run threads beyond initialized cores");
     if (threadnr >= solverData.size()) {
-        return; // do not interrupt too aggressively
+        return; // do not interrupt too aggressively, just ignore the ask
     }
 
     // stop early, in case solver is in a bad state initially already
