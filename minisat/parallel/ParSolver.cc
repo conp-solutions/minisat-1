@@ -48,6 +48,7 @@ ParSolver::ParSolver()
   , synced_units(0)
   , jobqueue(nullptr)
   , solvingBarrier(nullptr)
+  , simplification_seconds(0)
 {
     // Get number of cores, and allocate arrays
     init_solvers();
@@ -134,49 +135,65 @@ lbool ParSolver::solveLimited(const vec<Lit> &assumps, bool do_simp, bool turn_o
     conflict.clear();
     model.clear();
 
+    /* in case we shall simplify, first simplify sequentially (for now. TODO: might do something smart with the other threads in the future) */
+    if (use_simplification) {
+        std::cout << "c run simplification with primary solver" << std::endl;
+        simplification_seconds = wallClockTime() - simplification_seconds;
+        use_simplification = false;
+        ret = lbool(solvers[0]->eliminate(true));
+        simplification_seconds = wallClockTime() - simplification_seconds;
+        if (ret == l_False) {
+            std::cout << "c simplification solved formula as unsat" << std::endl;
+            assert(conflict.size() == 0);
+            goto done_solving;
+        }
+        ret = l_Undef;
+    }
+
     if (sequential()) {
-        model.swap(solvers[0]->model);
-        conflict.swap(solvers[0]->conflict);
         assert(solvers.size() == 1 && "actually implement parallel case");
         ret = solvers[0]->solveLimited(assumps, do_simp, turn_off_simp);
-        conflict.swap(solvers[0]->conflict);
-        model.swap(solvers[0]->model);
+        solvers[0]->conflict.moveTo(conflict);
+        solvers[0]->model.moveTo(model);
     } else {
-        assert(jobqueue && "object should be initialized");
+        assert(jobqueue && "jobqueue should be initialized");
+        assert(solvingBarrier && "solvingBarrier should be initialized");
 
-        /* in case we shall simplify, first simplify sequentially (for now. TODO: might do something smart with the other threads in the future) */
-        if (use_simplification) std::cout << "c run simplification with primary solver" << std::endl;
-        if (!solvers[0]->eliminate(true)) ok = false;
+        /* allow to use the barrier for ALL parallel solvers before they start solving in parallel */
+        solvingBarrier->grow(cores);
 
-        if (okay()) {
-            assumps.copyTo(assumptions); // copy to shared assumptions object
-            jobqueue->setState(JobQueue::SLEEP);
-            for (int t = 1; t < cores; ++t) { // all except master now
-                if (primary_modified) {
-                    sync_solver_from_primary(t);
-                }
-
-                // assert(t < solverData.size() && "enough solver data needs to be available");
-                JobQueue::Job job;
-                job.function = &(ParSolver::thread_entrypoint); // function that controls how a solver runs
-                job.argument = (void *)&(solverData[t]);
-                jobqueue->addJob(job); // TODO: instead of queue, use a slot based data structure, to make use of core pinning
+        assumps.copyTo(assumptions); // copy to shared assumptions object
+        jobqueue->setState(JobQueue::SLEEP);
+        for (int t = 1; t < cores; ++t) { // all except master now
+            if (primary_modified) {
+                sync_solver_from_primary(t);
             }
-            jobqueue->setState(JobQueue::WORKING);
 
-            // we now run search, so we should stop
-            primary_modified = false;
-            // also run the primary solver
-            thread_run_solve(0);
-            // prepare to sync from the state of the primary solver for incremental solving
-            synced_clauses = solvers[0]->nClauses();
-            synced_units = solvers[0]->nUnits();
+            // assert(t < solverData.size() && "enough solver data needs to be available");
+            JobQueue::Job job;
+            job.function = &(ParSolver::thread_entrypoint); // function that controls how a solver runs
+            job.argument = (void *)&(solverData[t]);
+            jobqueue->addJob(job); // TODO: instead of queue, use a slot based data structure, to make use of core pinning
         }
+        jobqueue->setState(JobQueue::WORKING);
+
+        // we now run search, so we should stop
+        primary_modified = false;
+        // also run the primary solver
+        thread_run_solve(0);
+        // prepare to sync from the state of the primary solver for incremental solving
+        synced_clauses = solvers[0]->nClauses();
+        synced_units = solvers[0]->nUnits();
+
 
         // when returning from this, all parallel solvers are 'done' as well, i.e. do not modify relevant state anymore
 
 #warning TODO: consume result, set 'ret' value
+        ret = collect_solvers_results();
+        // allow new call to solve method
+        assert(solvingBarrier->empty() && "all job functions should terminate themselves now");
     }
+done_solving:;
 
     return ret;
 }
@@ -330,6 +347,8 @@ void ParSolver::thread_run_solve(size_t threadnr)
     }
     solverData[threadnr]._status = l_Undef;
     solverData[threadnr]._status = solvers[threadnr]->solveLimited(assumptions);
+    /* wait until all solvers enter here */
+    solvingBarrier->wait();
 }
 
 void *ParSolver::thread_entrypoint(void *argument)

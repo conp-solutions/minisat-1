@@ -115,6 +115,9 @@ class ParSolver : protected SimpSolver
     void init_solvers();
     void tear_down_solvers();
     bool sequential() const { return cores == 1; }
+
+    // Extra stats
+    double simplification_seconds; // seconds of sequential core spend during simplification
 };
 
 //=================================================================================================
