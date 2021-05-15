@@ -113,8 +113,25 @@ bool ParSolver::isEliminated(Var v) const
 bool ParSolver::eliminate(bool turn_off_elim)
 {
     assert(solvers[0] != nullptr && "there has to be one working solver");
+    std::cout << "c primary elimination" << std::endl;
     primary_modified = true;
     return solvers[0]->eliminate(turn_off_elim);
+}
+
+void ParSolver::printStats()
+{
+    std::cout << "c used " << cores << " cores" << std::endl;
+    printf("c simplification wall time:      : %g s\n", simplification_seconds);
+
+    const double cpu_time = cpuTime();
+    printf("c CPU time                       : %g s\n", cpu_time);
+
+    double theoretical_max_wall = (wallClockTime() - simplification_seconds) * cores + simplification_seconds;
+    printf("c theor. Max CPU time:           : %g s\n", theoretical_max_wall);
+
+    double total_idle_time = 0;
+    for (int i = 0; i < solverData.size(); ++i) total_idle_time += solverData[i]._idle_s;
+    printf("c idle wall search time (sum):   : %g s\n", total_idle_time);
 }
 
 // Solving:

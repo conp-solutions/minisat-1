@@ -85,8 +85,7 @@ class ParSolver : protected SimpSolver
 
     int max_simp_cls(); // Return number of clauses when we do not perform simplification anymore
 
-    // TODO FIXME: to be implemented
-    void printStats() {}
+    void printStats();
 
     // Mode of operation:
     //
