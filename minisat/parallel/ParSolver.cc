@@ -200,12 +200,19 @@ lbool ParSolver::solveLimited(const vec<Lit> &assumps, bool do_simp, bool turn_o
                 sync_solver_from_primary(t);
             }
 
+            // initialize communication for solver
+            solvers[t]->initialize_parallel_solver(&solverData[t], ParSolver::portfolio_sync_and_share);
+
             // assert(t < solverData.size() && "enough solver data needs to be available");
             JobQueue::Job job;
             job.function = &(ParSolver::thread_entrypoint); // function that controls how a solver runs
             job.argument = (void *)&(solverData[t]);
             jobqueue->addJob(job); // TODO: instead of queue, use a slot based data structure, to make use of core pinning
         }
+        // initialize communication for primary solver
+        solvers[0]->initialize_parallel_solver(&solverData[0], ParSolver::portfolio_sync_and_share);
+
+        // parallel execution will start
         jobqueue->setState(JobQueue::WORKING);
 
         // we now run search, so we should stop
@@ -442,3 +449,24 @@ bool ParSolver::sync_solver_from_primary(int destination_solver_id)
     // sub solver object is not unsat
     return succeed_adding_clauses && dest_solver->okay();
 }
+
+bool ParSolver::portfolio_sync_and_share(void *issuer, lbool *status)
+{
+    // no communication set, just return
+    if (issuer == nullptr) return false;
+
+    SolverData *solverData = (SolverData *)issuer;
+    // if (verbosity > 2) std::cout << "c call sync for thread " << solverData->_threadnr << std::endl;
+
+    /* actuall sync all solvers with the portfolio sharing strategy */
+    bool stop_search = solverData->_parent->sync_thread_portfolio(solverData->_threadnr);
+
+    // forward status of solver after sharing
+    if (status != nullptr && *status == l_Undef) {
+        *status = solverData->_status;
+    }
+
+    return stop_search;
+}
+
+bool ParSolver::sync_thread_portfolio(size_t threadnr) { return false; }

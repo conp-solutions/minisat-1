@@ -121,6 +121,10 @@ class ParSolver : protected SimpSolver
     void solver_start_idling(size_t threadnr);
     void solver_stop_idling(size_t threadnr);
 
+    // Handle synchronization
+    static bool portfolio_sync_and_share(void *issuer, lbool *status); // this is called from a thread when a solver needs to sync (each restart)
+    bool sync_thread_portfolio(size_t threadnr); // synchronize threads at this point. return true, if search should be stopped
+
     // Extra stats
     double simplification_seconds; // seconds of sequential core spend during simplification
 };
