@@ -399,6 +399,7 @@ Solver::Solver()
   , consumeSharedCls(NULL)
   , issuer(NULL)
   , lastDecision(0)
+  , external_sync_and_share(nullptr)
 
   // simplifyAll adjust occasion
   , curSimplify(1)
@@ -3130,6 +3131,7 @@ lbool Solver::solve_()
     learntsize_adjust_confl = learntsize_adjust_start_confl;
     learntsize_adjust_cnt = (int)learntsize_adjust_confl;
     lbool status = l_Undef;
+    bool abort_search = false;
 
     ls_mediation_soln.resize(nVars());
     ls_best_soln.resize(nVars());
@@ -3167,13 +3169,16 @@ lbool Solver::solve_()
         while (status == l_Undef && init > 0 && withinBudget()) status = search(init);
         // do not use VSIDS now
         toggle_decision_heuristic(false);
+
+        // check with parallel co-workers
+        abort_search = sync_and_share(&status);
     }
 
     // Search:
     uint64_t curr_props = 0;
     int curr_restarts = 0;
     last_switch_conflicts = starts;
-    while (status == l_Undef && withinBudget()) {
+    while (status == l_Undef && withinBudget() && !abort_search) {
         if (propagations - curr_props > VSIDS_props_limit) {
             curr_props = propagations;
             switch_mode = true;
@@ -3189,7 +3194,7 @@ lbool Solver::solve_()
         }
 
         // check with parallel co-workers
-        if (status == l_Undef) status = sync_and_share();
+        if ((abort_search = sync_and_share(&status))) break;
 
         // toggle VSIDS?
         // if (switch_mode) {
@@ -3251,7 +3256,7 @@ lbool Solver::solve_()
     return status;
 }
 
-lbool Solver::sync_and_share()
+bool Solver::sync_and_share(lbool *status)
 {
     /* Implement synchronization and sharing
      * 1: check whether we should sync with others based on counter
@@ -3261,7 +3266,20 @@ lbool Solver::sync_and_share()
      * 5: clean structures
      * 6: continue
      */
-    return l_Undef;
+
+    if (external_sync_and_share && issuer) return external_sync_and_share(issuer, status);
+    return false;
+}
+
+void Solver::initialize_parallel_solver(void *_issuer, bool (*_external_sync_and_share)(void *, lbool *))
+{
+    assert((issuer == nullptr || issuer == _issuer) && "cannot set issuer multiple times");
+    assert((external_sync_and_share == nullptr || external_sync_and_share == _external_sync_and_share) &&
+           "cannot set sync function multiple times");
+
+    /* set values */
+    issuer = _issuer;
+    external_sync_and_share = _external_sync_and_share;
 }
 
 //=================================================================================================

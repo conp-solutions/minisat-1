@@ -469,9 +469,6 @@ class Solver
     int learnCallbackLimit;
     void (*learnCallback)(void *state, int *clause);
 
-    // parallel solving
-    lbool sync_and_share();
-
     // Temporaries (to reduce allocation overhead). Each variable is prefixed by the method in which it is
     // used, exept 'seen' wich is used in several places.
     //
@@ -756,6 +753,11 @@ class Solver
     void addLearnedClause(const vec<Lit> &cls); // add a learned clause by hand
     void diversify(int rank, int size);         // set parameters based on position in set, and set size
     bool importClause(const Clause &c);         // import 'input' (or formula) clause from another solver
+    // parallel solving
+    /// return true, if the current search should be stopped, and set the status variable for this solver
+    bool (*external_sync_and_share)(void *issuer, lbool *status); // get shared clauses from parallel solving and use them
+    bool sync_and_share(lbool *status); // call external_sync_and_share, if set, otherwise, return default behavior
+    void initialize_parallel_solver(void *_issuer, bool (*_external_sync_and_share)(void *, lbool *)); // setup structures for parallel communication
 
     // in redundant
     bool removed(CRef cr);
