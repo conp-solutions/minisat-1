@@ -118,6 +118,12 @@ bool ParSolver::eliminate(bool turn_off_elim)
     return solvers[0]->eliminate(turn_off_elim);
 }
 
+#define SUM_STATS(sum_variable, member)                                                                                \
+    do {                                                                                                               \
+        sum_variable = 0;                                                                                              \
+        for (int i = 0; i < solvers.size(); ++i) sum_variable += solvers[i]->member;                                   \
+    } while (false)
+
 void ParSolver::printStats()
 {
     std::cout << "c used " << cores << " cores" << std::endl;
@@ -132,6 +138,14 @@ void ParSolver::printStats()
     double total_idle_time = 0;
     for (int i = 0; i < solverData.size(); ++i) total_idle_time += solverData[i]._idle_s;
     printf("c idle wall search time (sum):   : %g s\n", total_idle_time);
+
+    uint64_t total_conflicts = 0, total_decisions = 0, total_restarts = 0;
+    SUM_STATS(total_conflicts, conflicts);
+    SUM_STATS(total_decisions, decisions);
+    SUM_STATS(total_restarts, starts);
+    printf("c SUM stats conflicts:           : %ld\n", total_conflicts);
+    printf("c SUM stats decisions:           : %ld\n", total_decisions);
+    printf("c SUM stats restarts:            : %ld\n", total_restarts);
 }
 
 // Solving:
