@@ -23,6 +23,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include "mtl/Queue.h"
 #include "simp/SimpSolver.h"
 
+#include <atomic>
 
 namespace MERGESAT_NSPACE
 {
@@ -38,15 +39,14 @@ class ParSolver : protected SimpSolver
 
     /* structure, that holds relevant data for parallel solving */
     struct SolverData {
-        ParSolver *_parent; // pointer to the coordinating ParSolver object
-        int _threadnr;      // number of the solver among all solvers
-        lbool _status;      // status of the associated SAT solver
-        double _idle_s;     // seconds this thread idled while waiting
+        ParSolver *_parent = nullptr;          // pointer to the coordinating ParSolver object
+        int _threadnr = 0;                     // number of the solver among all solvers
+        lbool _status = l_Undef;               // status of the associated SAT solver
+        double _idle_s = 0;                    // seconds this thread idled while waiting
+        uint64_t _next_sync_counter_limit = 0; // indicate when to actually sync next
 
-        SolverData(ParSolver *parent, int threadnr) : _parent(parent), _threadnr(threadnr), _status(l_Undef), _idle_s(0)
-        {
-        }
-        SolverData() : _parent(nullptr), _threadnr(0), _status(l_Undef), _idle_s(0) {}
+        SolverData(ParSolver *parent, int threadnr) : _parent(parent), _threadnr(threadnr) {}
+        SolverData() {}
     };
 
     public:
@@ -106,8 +106,9 @@ class ParSolver : protected SimpSolver
     size_t synced_clauses; // store number of clauses in primary solver after last sync (after solving)
     size_t synced_units;   // store number of unit clauses in primary solver after last sync (after solving)
 
-    JobQueue *jobqueue;      /// hold jobs for parallel items
-    Barrier *solvingBarrier; /// sync execution after parallel solveing (prt for simpler integration)
+    JobQueue *jobqueue;               /// hold jobs for parallel items
+    Barrier *solvingBarrier;          /// sync execution after parallel solveing (prt for simpler integration)
+    std::atomic<int> syncing_solvers; /// count solvers that are currently synching
     static void *thread_entrypoint(void *argument);
     void thread_run_solve(size_t threadnr);
     bool sync_solver_from_primary(int destination_solver_id); /// sync from primary to parallel solver

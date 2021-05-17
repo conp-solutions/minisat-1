@@ -48,6 +48,7 @@ ParSolver::ParSolver()
   , synced_units(0)
   , jobqueue(nullptr)
   , solvingBarrier(nullptr)
+  , syncing_solvers(0)
   , simplification_seconds(0)
 {
     // Get number of cores, and allocate arrays
@@ -173,6 +174,7 @@ lbool ParSolver::solveLimited(const vec<Lit> &assumps, bool do_simp, bool turn_o
         use_simplification = false;
         ret = lbool(solvers[0]->eliminate(true));
         simplification_seconds = wallClockTime() - simplification_seconds;
+        solverData[0]._next_sync_counter_limit = solvers[0]->counter_access.sum();
         if (ret == l_False) {
             std::cout << "c simplification solved formula as unsat" << std::endl;
             assert(conflict.size() == 0);
@@ -469,4 +471,34 @@ bool ParSolver::portfolio_sync_and_share(void *issuer, lbool *status)
     return stop_search;
 }
 
-bool ParSolver::sync_thread_portfolio(size_t threadnr) { return false; }
+bool ParSolver::sync_thread_portfolio(size_t threadnr)
+{
+    /* TODO: make use of the solvingBarrier here to make solving deterministic */
+    assert(solvingBarrier && "in case of parallel solving, there needs to be a barrier");
+
+    /* ignore this call, in case we did not reach the solver internal step limit */
+    if (solverData[threadnr]._next_sync_counter_limit >= solvers[threadnr]->counter_access.sum()) return false;
+
+    /* use this variable to determine how to treat difficiencies in synchronizing */
+    int64_t sync_diff = 10000;               // as a start, allow 10k more clause accesses
+    int entering_sync = (syncing_solvers++); // remember when we reached syncing, to better adjust sync_diff
+
+    /* block on the barrier */
+    solvingBarrier->wait();
+    syncing_solvers = 0; // set back to 0 for next syncing
+
+    /* prepare clauses to share */
+
+    /* block on the barrier */
+    solvingBarrier->wait();
+
+    /* consume clauses shared by others */
+
+    /* block on the barrier */
+    solvingBarrier->wait();
+
+    assert(sync_diff > 0 && "do not decrease sync diff value");
+    solverData[threadnr]._next_sync_counter_limit += sync_diff;
+
+    return false;
+}
