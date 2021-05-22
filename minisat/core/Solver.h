@@ -376,10 +376,10 @@ class Solver
         DISTANCE
     };
     decision_heuristic current_heuristic;
-    bool usesVSIDS();
-    bool usesCHB();
-    bool usesDISTANCE();
-    bool considersDISTANCE();
+    bool usesVSIDS() const;
+    bool usesCHB() const;
+    bool usesDISTANCE() const;
+    bool considersDISTANCE() const;
     void disableDISTANCEheuristic();
     void enableDISTANCEheuristic();
     vec<Var> decision_rebuild_vars; // Set of variables that need to be used as decisions
@@ -1048,13 +1048,13 @@ inline void Solver::toDimacs(const char *file, Lit p, Lit q, Lit r)
     toDimacs(file, as);
 }
 
-inline bool Solver::usesVSIDS() { return current_heuristic == VSIDS_CHB || current_heuristic == VSIDS_DISTANCE; }
+inline bool Solver::usesVSIDS() const { return current_heuristic == VSIDS_CHB || current_heuristic == VSIDS_DISTANCE; }
 
-inline bool Solver::usesDISTANCE() { return current_heuristic == DISTANCE; }
+inline bool Solver::usesDISTANCE() const { return current_heuristic == DISTANCE; }
 
-inline bool Solver::considersDISTANCE() { return current_heuristic == DISTANCE || current_heuristic == VSIDS_DISTANCE; }
+inline bool Solver::considersDISTANCE() const { return current_heuristic == DISTANCE || current_heuristic == VSIDS_DISTANCE; }
 
-inline bool Solver::usesCHB() { return current_heuristic == CHB; }
+inline bool Solver::usesCHB() const { return current_heuristic == CHB; }
 
 inline void Solver::setTermCallback(void *state, int (*termCallback)(void *))
 {
