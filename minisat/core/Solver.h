@@ -756,7 +756,7 @@ class Solver
     // parallel solving
     /// return true, if the current search should be stopped, and set the status variable for this solver
     bool (*external_sync_and_share)(void *issuer, lbool *status); // get shared clauses from parallel solving and use them
-    bool sync_and_share(lbool *status); // call external_sync_and_share, if set, otherwise, return default behavior
+    bool sync_and_share(lbool *status_after_sync); // call external_sync_and_share, if set, otherwise, return default behavior, might write status value
     void initialize_parallel_solver(void *_issuer, bool (*_external_sync_and_share)(void *, lbool *)); // setup structures for parallel communication
 
     // in redundant

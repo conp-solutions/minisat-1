@@ -3256,7 +3256,7 @@ lbool Solver::solve_()
     return status;
 }
 
-bool Solver::sync_and_share(lbool *status)
+bool Solver::sync_and_share(lbool *status_after_sync)
 {
     /* Implement synchronization and sharing
      * 1: check whether we should sync with others based on counter
@@ -3267,7 +3267,7 @@ bool Solver::sync_and_share(lbool *status)
      * 6: continue
      */
 
-    if (external_sync_and_share && issuer) return external_sync_and_share(issuer, status);
+    if (external_sync_and_share && issuer) return external_sync_and_share(issuer, status_after_sync);
     return false;
 }
 
