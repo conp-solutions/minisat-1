@@ -3195,6 +3195,9 @@ lbool Solver::solve_()
 
         // check with parallel co-workers
         if ((abort_search = sync_and_share(&status))) break;
+        else {
+            if (verbosity > 1) std::cout << "c syncing did not result in abort " << status << std::endl;
+        }
 
         // toggle VSIDS?
         // if (switch_mode) {
