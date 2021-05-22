@@ -148,6 +148,16 @@ void ParSolver::printStats()
     printf("c SUM stats conflicts:           : %ld\n", total_conflicts);
     printf("c SUM stats decisions:           : %ld\n", total_decisions);
     printf("c SUM stats restarts:            : %ld\n", total_restarts);
+    printf("c winning threads:");
+    for (int i = 0 ; i < solverData.size(); ++ i) {
+        if (solverData[i]._winning > 0 ) printf(" %d:%d", i, solverData[i]._winning);
+    }
+    printf("\n");
+    printf("c barrier data:");
+    for (int i = 0 ; i < solverData.size(); ++ i) {
+        printf(" %d:%u/%u", i, solverData[i]._entered_barrier, solverData[i]._blocked_by_barrier);
+    }
+    printf("\n");
 }
 
 // Solving:
@@ -249,6 +259,8 @@ lbool ParSolver::collect_solvers_results()
     for (int t = 0; t < cores; ++t) { // all except master now
         lbool r = solverData[t]._status;
         assert((status == l_Undef || r == l_Undef || status == r) && "solvers have to have same result");
+        assert(solverData[t]._blocked_by_barrier == solverData[0]._blocked_by_barrier && "barrier blocks have to match");
+        assert(solverData[t]._entered_barrier == solverData[0]._entered_barrier && "entered barriers have to match");
 
         /* pick 'winning solver' */
         if (r != l_Undef) {
@@ -463,7 +475,6 @@ bool ParSolver::portfolio_sync_and_share(void *issuer, lbool *status)
     if (issuer == nullptr) return false;
 
     SolverData *solverData = (SolverData *)issuer;
-    // if (verbosity > 2) std::cout << "c call sync for thread " << solverData->_threadnr << std::endl;
 
     /* actuall sync all solvers with the portfolio sharing strategy */
     bool stop_search = solverData->_parent->sync_thread_portfolio(solverData->_threadnr);
@@ -492,6 +503,8 @@ bool ParSolver::sync_thread_portfolio(size_t threadnr, bool caller_has_solution)
 
     /* do not block, in case some solver already found the solution */
     if (solved_current_call) return true;
+
+    solverData[threadnr]._entered_barrier ++;
 
     /* use this variable to determine how to treat difficiencies in synchronizing */
     int64_t sync_diff = 10000;               // as a start, allow 10k more clause accesses
@@ -522,6 +535,7 @@ bool ParSolver::sync_thread_portfolio(size_t threadnr, bool caller_has_solution)
     }
     assert(sync_diff > 0 && "do not decrease sync diff value");
     solverData[threadnr]._next_sync_counter_limit += sync_diff;
+    if (solverData[threadnr]._status != l_Undef) solverData[threadnr]._winning ++;
     /* abort early, in case we already found a solution */
     if (status != l_Undef) {
         /* some solver solved the current call */
@@ -533,16 +547,21 @@ bool ParSolver::sync_thread_portfolio(size_t threadnr, bool caller_has_solution)
     /* prepare clauses to share */
 
     /* block on the barrier */
+    if (verbosity > 1) std::cout << "c sync_thread_portfolio barrier wait 2 by thread " << threadnr << std::endl;
     solvingBarrier->wait();
+    if (verbosity > 1) std::cout << "c sync clauses with thread " << threadnr << " and access limit: " << solvers[threadnr]->counter_access.sum() << std::endl;
 
     /* consume clauses shared by others */
 
     /* block on the barrier */
+    if (verbosity > 1) std::cout << "c sync_thread_portfolio barrier wait 3 by thread " << threadnr << std::endl;
     solvingBarrier->wait();
 
     assert(sync_diff > 0 && "do not decrease sync diff value");
     solverData[threadnr]._next_sync_counter_limit += sync_diff;
+    if (solverData[threadnr]._status != l_Undef) solverData[threadnr]._winning ++;
 
     /* stop search in case we found a solution */
+    if (status == l_Undef) solverData[threadnr]._blocked_by_barrier ++;
     return status != l_Undef;
 }

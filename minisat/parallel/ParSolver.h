@@ -44,6 +44,9 @@ class ParSolver : protected SimpSolver
         lbool _status = l_Undef;               // status of the associated SAT solver
         double _idle_s = 0;                    // seconds this thread idled while waiting
         uint64_t _next_sync_counter_limit = 0; // indicate when to actually sync next
+        uint32_t _winning = 0;                 // indicate number of times this thread won
+        uint32_t _entered_barrier = 0;         // count how often we entered the sync barrier
+        uint32_t _blocked_by_barrier = 0;      // count how often we had to wait in the sync barrier
 
         SolverData(ParSolver *parent, int threadnr) : _parent(parent), _threadnr(threadnr) {}
         SolverData() {}
