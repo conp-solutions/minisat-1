@@ -114,7 +114,7 @@ bool ParSolver::isEliminated(Var v) const
 bool ParSolver::eliminate(bool turn_off_elim)
 {
     assert(solvers[0] != nullptr && "there has to be one working solver");
-    std::cout << "c primary elimination" << std::endl;
+    if (verbosity > 1) std::cout << "c primary elimination" << std::endl;
     primary_modified = true;
     return solvers[0]->eliminate(turn_off_elim);
 }
@@ -127,7 +127,7 @@ bool ParSolver::eliminate(bool turn_off_elim)
 
 void ParSolver::printStats()
 {
-    std::cout << "c used " << cores << " cores" << std::endl;
+    printf("c used cores:                    : %d\n", cores);
     printf("c simplification wall time:      : %g s\n", simplification_seconds);
 
     const double cpu_time = cpuTime();
@@ -169,14 +169,14 @@ lbool ParSolver::solveLimited(const vec<Lit> &assumps, bool do_simp, bool turn_o
 
     /* in case we shall simplify, first simplify sequentially (for now. TODO: might do something smart with the other threads in the future) */
     if (use_simplification) {
-        std::cout << "c run simplification with primary solver" << std::endl;
+        if (verbosity > 1) std::cout << "c run simplification with primary solver" << std::endl;
         simplification_seconds = wallClockTime() - simplification_seconds;
         use_simplification = false;
         ret = lbool(solvers[0]->eliminate(true));
         simplification_seconds = wallClockTime() - simplification_seconds;
         solverData[0]._next_sync_counter_limit = solvers[0]->counter_access.sum();
         if (ret == l_False) {
-            std::cout << "c simplification solved formula as unsat" << std::endl;
+            if (verbosity > 1) std::cout << "c simplification solved formula as unsat" << std::endl;
             assert(conflict.size() == 0);
             goto done_solving;
         }
@@ -231,6 +231,7 @@ lbool ParSolver::solveLimited(const vec<Lit> &assumps, bool do_simp, bool turn_o
 #warning TODO: consume result, set 'ret' value
         ret = collect_solvers_results();
         // allow new call to solve method
+        if (verbosity > 1) std::cout << "c terminate ParSolver::solveLimited()" << std::endl;
         assert(solvingBarrier->empty() && "all job functions should terminate themselves now");
     }
 done_solving:;
@@ -317,7 +318,7 @@ void ParSolver::init_solvers()
 
     /* make sure we have at least one solver */
     cores = cores <= 1 ? 1 : cores;
-    std::cout << "c initialize solver for " << cores << " cores" << std::endl;
+    if (verbosity > 1) std::cout << "c initialize solver for " << cores << " cores" << std::endl;
 
     solvers.growTo(cores, nullptr);
     for (int i = 0; i < solvers.size(); ++i) {
@@ -332,7 +333,7 @@ void ParSolver::init_solvers()
     if (cores > 1) {
         assert(!jobqueue && "do not override the jobqueue");
         if (jobqueue) delete jobqueue;
-        std::cout << "c initialize thread pool for " << cores - 1 << " non-primary threads" << std::endl;
+        if (verbosity > 1) std::cout << "c initialize thread pool for " << cores - 1 << " non-primary threads" << std::endl;
         jobqueue = new JobQueue(cores - 1);  // all except the main core
         jobqueue->setState(JobQueue::SLEEP); // set all to sleep
 
@@ -386,7 +387,7 @@ void ParSolver::solver_stop_idling(size_t threadnr)
 
 void ParSolver::thread_run_solve(size_t threadnr)
 {
-    std::cout << "c started thread " << threadnr << std::endl;
+    if (verbosity > 1) std::cout << "c started thread " << threadnr << std::endl;
 
     assert(solvers.size() == solverData.size() && "number of solvers and data should match");
     assert(threadnr < solverData.size() && "cannot run threads beyond initialized cores");
@@ -401,6 +402,7 @@ void ParSolver::thread_run_solve(size_t threadnr)
     }
     solverData[threadnr]._status = l_Undef;
     solverData[threadnr]._status = solvers[threadnr]->solveLimited(assumptions);
+    if (verbosity > 1) std::cout << "c thread " << threadnr << " finished solving with " << solverData[threadnr]._status << " and accesses:" << solvers[threadnr]->counter_access.sum() << std::endl;
     /* wait until all solvers enter here */
     solver_start_idling(threadnr);
     solvingBarrier->wait();
@@ -418,13 +420,13 @@ void *ParSolver::thread_entrypoint(void *argument)
 bool ParSolver::sync_solver_from_primary(int destination_solver_id)
 {
     if (!primary_modified) return false;
-    std::cout << "c sync solver " << destination_solver_id << " from primary solver object" << std::endl;
+    if (verbosity > 1) std::cout << "c sync solver " << destination_solver_id << " from primary solver object" << std::endl;
     SimpSolver *const dest_solver = solvers[destination_solver_id];
     SimpSolver *const source_solver = solvers[0];
 
     // sync variables
     if (dest_solver->nVars() < source_solver->nVars()) {
-        std::cout << "c resolve variable diff: " << source_solver->nVars() - dest_solver->nVars() << std::endl;
+        if (verbosity > 1) std::cout << "c resolve variable diff: " << source_solver->nVars() - dest_solver->nVars() << std::endl;
         dest_solver->reserveVars(source_solver->nVars());
         while (dest_solver->nVars() < source_solver->nVars()) {
             // ignore eliminated variables for decisions
@@ -434,14 +436,14 @@ bool ParSolver::sync_solver_from_primary(int destination_solver_id)
     }
     // sync unit clauses
     bool succeed_adding_clauses = true;
-    std::cout << "c resolve unit diff: " << source_solver->nUnits() - synced_units << std::endl;
+    if (verbosity > 1) std::cout << "c resolve unit diff: " << source_solver->nUnits() - synced_units << std::endl;
     for (size_t unit_idx = synced_units; unit_idx < source_solver->nUnits(); ++unit_idx) {
         const Lit l = source_solver->getUnit(unit_idx);
         succeed_adding_clauses = succeed_adding_clauses && dest_solver->addClause(l);
     }
 
     // sync clauses (after simplification, this will only sync the simplified clauses)
-    std::cout << "c resolve unit diff: " << source_solver->nClauses() - synced_clauses << std::endl;
+    if (verbosity > 1) std::cout << "c resolve clause diff: " << source_solver->nClauses() - synced_clauses << std::endl;
     for (size_t cls_idx = synced_clauses; cls_idx < source_solver->nClauses(); ++cls_idx) {
         const Clause &c = source_solver->getClause(cls_idx);
         if (c.mark() == 1) continue; // skip satisfied clauses
