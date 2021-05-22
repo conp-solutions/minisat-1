@@ -119,8 +119,8 @@ class ParSolver : protected SimpSolver
     void init_solvers();
     void tear_down_solvers();
     bool sequential() const { return cores == 1; }
-    void solver_start_idling(size_t threadnr);
-    void solver_stop_idling(size_t threadnr);
+    void solver_start_measure_idling(size_t threadnr);
+    void solver_stop_measure_idling(size_t threadnr);
 
     // Handle synchronization
     static bool portfolio_sync_and_share(void *issuer, lbool *status); // this is called from a thread when a solver needs to sync (each restart)

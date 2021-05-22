@@ -371,13 +371,13 @@ void ParSolver::tear_down_solvers()
     initialized = false;
 }
 
-void ParSolver::solver_start_idling(size_t threadnr)
+void ParSolver::solver_start_measure_idling(size_t threadnr)
 {
     assert(threadnr < solverData.size() && "only existing solvers can idle");
     solverData[threadnr]._idle_s = wallClockTime() - solverData[threadnr]._idle_s;
 }
 
-void ParSolver::solver_stop_idling(size_t threadnr)
+void ParSolver::solver_stop_measure_idling(size_t threadnr)
 {
     assert(threadnr < solverData.size() && "only existing solvers can idle");
     solverData[threadnr]._idle_s = wallClockTime() - solverData[threadnr]._idle_s;
@@ -404,9 +404,9 @@ void ParSolver::thread_run_solve(size_t threadnr)
     solverData[threadnr]._status = solvers[threadnr]->solveLimited(assumptions);
     if (verbosity > 1) std::cout << "c thread " << threadnr << " finished solving with " << solverData[threadnr]._status << " and accesses:" << solvers[threadnr]->counter_access.sum() << std::endl;
     /* wait until all solvers enter here */
-    solver_start_idling(threadnr);
+    solver_start_measure_idling(threadnr);
     solvingBarrier->wait();
-    solver_stop_idling(threadnr);
+    solver_stop_measure_idling(threadnr);
 }
 
 void *ParSolver::thread_entrypoint(void *argument)
