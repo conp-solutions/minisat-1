@@ -133,6 +133,7 @@ int main(int argc, char **argv)
         // Extra options:
         //
         IntOption verb("MAIN", "verb", "Verbosity level (0=silent, 1=some, 2=more).", 1, IntRange(0, 4), false);
+        BoolOption pre("MAIN", "pre", "Completely turn on/off any preprocessing.", true);
         BoolOption s_model("MAIN", "model", "Do report a model if the formula is satisfiable.", true, false);
         StringOption dimacs("MAIN", "dimacs", "If given, stop after preprocessing and write the result to this file.");
         IntOption cpu_lim("MAIN", "cpu-lim", "Limit on CPU time allowed in seconds.\n", INT32_MAX, IntRange(0, INT32_MAX), false);
@@ -153,6 +154,7 @@ int main(int argc, char **argv)
 
         S.parsing = true;
         S.verbosity = verb;
+        S.use_simplification = pre;
 
         solver = &S;
         // Use signal handlers that forcibly quit until the solver will be able to respond to
