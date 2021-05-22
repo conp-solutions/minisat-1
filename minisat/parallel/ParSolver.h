@@ -103,6 +103,7 @@ class ParSolver : protected SimpSolver
     vec<Lit> assumptions;
 
     bool primary_modified; // indicate whether state of primary solver has been changed (new variables or clauses)
+    bool solved_current_call; // indicate that the current solving task has been solved
     size_t synced_clauses; // store number of clauses in primary solver after last sync (after solving)
     size_t synced_units;   // store number of unit clauses in primary solver after last sync (after solving)
 
@@ -124,7 +125,7 @@ class ParSolver : protected SimpSolver
 
     // Handle synchronization
     static bool portfolio_sync_and_share(void *issuer, lbool *status); // this is called from a thread when a solver needs to sync (each restart)
-    bool sync_thread_portfolio(size_t threadnr); // synchronize threads at this point. return true, if search should be stopped
+    bool sync_thread_portfolio(size_t threadnr, bool enforce_waiting=false); // synchronize threads at this point. return true, if search should be stopped
 
     // Extra stats
     double simplification_seconds; // seconds of sequential core spend during simplification

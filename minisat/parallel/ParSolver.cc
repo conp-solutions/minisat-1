@@ -44,6 +44,7 @@ ParSolver::ParSolver()
   , cores(opt_cores)
   , initialized(false)
   , primary_modified(false)
+  , solved_current_call(false)
   , synced_clauses(0)
   , synced_units(0)
   , jobqueue(nullptr)
@@ -162,8 +163,9 @@ lbool ParSolver::solveLimited(const vec<Lit> &assumps, bool do_simp, bool turn_o
 {
     assert(solvers[0] != nullptr && "there has to be one working solver");
 
-    /* prepare next search iteration */
+    /* prepare next search iteration, local and object global state */
     lbool ret = l_Undef;
+    solved_current_call = false;
     conflict.clear();
     model.clear();
 
@@ -405,7 +407,8 @@ void ParSolver::thread_run_solve(size_t threadnr)
     if (verbosity > 1) std::cout << "c thread " << threadnr << " finished solving with " << solverData[threadnr]._status << " and accesses:" << solvers[threadnr]->counter_access.sum() << std::endl;
     /* wait until all solvers enter here */
     solver_start_measure_idling(threadnr);
-    solvingBarrier->wait();
+    /* final sync, enforce it (e.g. do not respect limits) */
+    sync_thread_portfolio(threadnr, true);
     solver_stop_measure_idling(threadnr);
 }
 
@@ -473,21 +476,59 @@ bool ParSolver::portfolio_sync_and_share(void *issuer, lbool *status)
     return stop_search;
 }
 
-bool ParSolver::sync_thread_portfolio(size_t threadnr)
+bool ParSolver::sync_thread_portfolio(size_t threadnr, bool caller_has_solution)
 {
     /* TODO: make use of the solvingBarrier here to make solving deterministic */
     assert(solvingBarrier && "in case of parallel solving, there needs to be a barrier");
+    assert( (!caller_has_solution || solved_current_call || solverData[threadnr]._status != l_Undef)
+      && "we have to know the solution with this flag set, either ourselves, or another solver in an earlier sync");
 
     /* ignore this call, in case we did not reach the solver internal step limit */
-    if (solverData[threadnr]._next_sync_counter_limit >= solvers[threadnr]->counter_access.sum()) return false;
+    if (!caller_has_solution) {
+        if (solverData[threadnr]._next_sync_counter_limit >= solvers[threadnr]->counter_access.sum()) return false;
+    }
+
+    /* keep evaluation and early aborts below limitation check, to maintain deterministic behavior */
+
+    /* do not block, in case some solver already found the solution */
+    if (solved_current_call) return true;
 
     /* use this variable to determine how to treat difficiencies in synchronizing */
     int64_t sync_diff = 10000;               // as a start, allow 10k more clause accesses
     int entering_sync = (syncing_solvers++); // remember when we reached syncing, to better adjust sync_diff
 
     /* block on the barrier */
+    if (verbosity > 1) std::cout << "c sync_thread_portfolio barrier wait 1 by thread " << threadnr << std::endl;
+    /* in case we do not have the solution already, count waiting time as idle time */
+    if (!caller_has_solution) solver_start_measure_idling(threadnr);
     solvingBarrier->wait();
+    if (!caller_has_solution) solver_stop_measure_idling(threadnr);
     syncing_solvers = 0; // set back to 0 for next syncing
+
+    /* check for new status only after the barrier! */
+    lbool status = l_Undef;
+    for (int t = 0; t < cores; ++t) { // all except master now
+        lbool r = solverData[t]._status;
+        assert((status == l_Undef || r == l_Undef || status == r) && "solvers have to have same result");
+
+        /* pick 'winning solver' */
+        if (r != l_Undef) {
+            if (status != l_Undef && r != status) {
+                throw "c detected unsound parallel behavior when collecting results, aborting";
+                exit(1); // unsound
+            }
+            status = r;
+        }
+    }
+    assert(sync_diff > 0 && "do not decrease sync diff value");
+    solverData[threadnr]._next_sync_counter_limit += sync_diff;
+    /* abort early, in case we already found a solution */
+    if (status != l_Undef) {
+        /* some solver solved the current call */
+        solved_current_call = true;
+        if (verbosity > 1) std::cout << "c sync clauses with thread " << threadnr << " exits early" << std::endl;
+        return true;
+    }
 
     /* prepare clauses to share */
 
@@ -502,5 +543,6 @@ bool ParSolver::sync_thread_portfolio(size_t threadnr)
     assert(sync_diff > 0 && "do not decrease sync diff value");
     solverData[threadnr]._next_sync_counter_limit += sync_diff;
 
-    return false;
+    /* stop search in case we found a solution */
+    return status != l_Undef;
 }
