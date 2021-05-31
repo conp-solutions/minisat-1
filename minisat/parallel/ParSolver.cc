@@ -205,7 +205,9 @@ lbool ParSolver::solveLimited(const vec<Lit> &assumps, bool do_simp, bool turn_o
         assert(solvingBarrier && "solvingBarrier should be initialized");
 
         /* allow to use the barrier for ALL parallel solvers before they start solving in parallel */
-        solvingBarrier->grow(cores);
+        if (!solvingBarrier->grow(cores)) {
+            assert(false && "growing to requested number of cores has to work");
+        }
 
         assumps.copyTo(assumptions); // copy to shared assumptions object
         jobqueue->setState(JobQueue::SLEEP);
