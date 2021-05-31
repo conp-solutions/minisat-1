@@ -58,7 +58,7 @@ void printStats(ParSolver &solver)
 }
 
 
-static ParSolver *solver;
+static ParSolver *solver = nullptr;
 // Terminate by notifying the solver and back out gracefully. This is mainly to have a test-case
 // for this feature of the Solver as it may take longer than an immediate call to '_exit()'.
 static void default_signal_handler(int signalnr)
