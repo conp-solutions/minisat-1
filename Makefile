@@ -61,7 +61,15 @@ SORELEASE?=.0#   Declare empty to leave out from library file name.
 MINISAT_CXXFLAGS = -I. -Iminisat -D __STDC_LIMIT_MACROS -D __STDC_FORMAT_MACROS -Wall -Wextra
 MINISAT_CXXFLAGS += -Wno-unused-label -Wno-sequence-point -Wno-write-strings -Wno-unused-parameter
 MINISAT_CXXFLAGS += -Wno-class-memaccess -Wno-unknown-warning-option -std=c++11
-MINISAT_LDFLAGS  = -Wall -lz -pthread
+MINISAT_LDFLAGS  = -Wall -lz
+
+# Allow to control which kind of the solver is build, by default 'simp' (sequential)
+# Supported:  'simp, 'parallel'
+ifeq ($(BUILD_TYPE),)
+    BUILD_TYPE=simp
+else
+    MINISAT_LDFLAGS  += -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+endif
 
 ifeq (Darwin,$(findstring Darwin,$(shell uname)))
 	SHARED_LDFLAGS += -shared -Wl,-dylib_install_name,$(MINISAT_DLIB).$(SOMAJOR)
@@ -76,12 +84,6 @@ ifeq ($(VERB),)
 VERB=@
 else
 VERB=
-endif
-
-# Allow to control which kind of the solver is build, by default 'simp' (sequential)
-# Supported:  'simp, 'parallel'
-ifeq ($(BUILD_TYPE),)
-    BUILD_TYPE=simp
 endif
 
 SRCS = $(wildcard minisat/core/*.cc) $(wildcard minisat/simp/*.cc) $(wildcard minisat/$(BUILD_TYPE)/*.cc) $(wildcard minisat/utils/*.cc)
